@@ -1,0 +1,309 @@
+:root {
+  color-scheme: light;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #eef2f7;
+  color: #172033;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+#app {
+  display: grid;
+  grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid #cbd5e1;
+  background: #f8fafc;
+}
+
+.app-title {
+  padding: 16px;
+  border-bottom: 1px solid #d9e2ee;
+}
+
+.app-title h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 720;
+}
+
+.app-title p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.segment-lists {
+  overflow: auto;
+  min-height: 0;
+  padding: 12px;
+}
+
+.segment-lists section + section {
+  margin-top: 18px;
+}
+
+.segment-lists h2 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #64748b;
+  text-transform: uppercase;
+}
+
+.segment-list {
+  display: grid;
+  gap: 6px;
+}
+
+.segment-button {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #d9e2ee;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #172033;
+  text-align: left;
+  cursor: pointer;
+}
+
+.segment-button:hover {
+  border-color: #2a9d8f;
+}
+
+.segment-button span,
+.segment-button small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.segment-button span {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.segment-button small {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid #cbd5e1;
+  background: #ffffff;
+}
+
+.class-buttons,
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.toolbar button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #172033;
+  cursor: pointer;
+}
+
+.toolbar button:hover {
+  border-color: #2a9d8f;
+  background: #edf8f6;
+}
+
+.toolbar button[aria-pressed="true"],
+.toolbar button.is-active {
+  border-color: #176f66;
+  background: #2a9d8f;
+  color: #ffffff;
+}
+
+.toolbar button[aria-pressed="true"]:hover,
+.toolbar button.is-active:hover {
+  border-color: #0f5f57;
+  background: #23867a;
+}
+
+.toolbar label {
+  display: grid;
+  gap: 2px;
+  min-width: 94px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.toolbar input[type="range"] {
+  width: 94px;
+}
+
+.status-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #d9e2ee;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 13px;
+}
+
+#active-segment {
+  min-width: 0;
+  overflow: hidden;
+  color: #172033;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#status {
+  flex: 0 0 auto;
+}
+
+.viewer-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(280px, 0.8fr);
+  width: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.profile-panel,
+.map-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.profile-panel {
+  border-right: 1px solid #cbd5e1;
+  background: #ffffff;
+}
+
+.map-panel {
+  background: #dbe4ef;
+}
+
+@media (max-width: 900px) {
+  #app {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(180px, 32vh) 1fr;
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid #cbd5e1;
+  }
+
+  .segment-lists {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .segment-lists section + section {
+    margin-top: 0;
+  }
+
+  .toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .class-buttons,
+  .actions {
+    display: grid;
+    width: 100%;
+  }
+
+  .class-buttons {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .actions {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .toolbar button {
+    min-width: 0;
+    overflow: hidden;
+    padding: 0 8px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .toolbar label {
+    width: 100%;
+  }
+
+  .toolbar input[type="range"] {
+    width: 100%;
+  }
+
+  .viewer-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(170px, 1fr) minmax(90px, 0.45fr);
+  }
+
+  .workspace {
+    height: 100%;
+  }
+
+  .profile-panel {
+    border-right: 0;
+    border-bottom: 1px solid #cbd5e1;
+  }
+}

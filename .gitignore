@@ -1,0 +1,12 @@
+.DS_Store
+__pycache__/
+.venv/
+.uv-cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+frontend/node_modules/
+frontend/dist/
+frontend/.test-dist/
+frontend/.vite-cache/
+reference_data/
