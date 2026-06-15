@@ -60,3 +60,49 @@ export interface ProposalPayload {
   rows: LabelRow[];
   metadata: Record<string, unknown>;
 }
+
+export interface ManifestPayload {
+  mode?: "reprocess" | string;
+  configured?: boolean;
+  input_dir?: string | null;
+  output_dir?: string | null;
+  suggested_output_dir?: string | null;
+  source_count?: number;
+  segment_count?: number;
+}
+
+export interface ReprocessSource {
+  source_relative_path: string;
+  file_name: string;
+  source_label: string | null;
+  beams: string[];
+}
+
+export interface ReprocessSourceListPayload {
+  count: number;
+  sources: ReprocessSource[];
+}
+
+export interface ReprocessBeamSummary {
+  source_relative_path: string;
+  file_name: string;
+  beam: string;
+  photon_count: number;
+  day_night: "day" | "night";
+  beam_strength: "strong" | "weak";
+  x_atc_start_m: number;
+  x_atc_end_m: number;
+}
+
+export interface ReprocessBeamPayload {
+  source: ReprocessSource;
+  beam: ReprocessBeamSummary;
+  photons: PhotonTable;
+  labels: LabelRow[];
+}
+
+export interface ReprocessSavePayload {
+  source: string;
+  output_path: string;
+  written_beams: string[];
+}

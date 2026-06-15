@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from bathy_labeler.backend.hdf5_store import Atl24Store
 from bathy_labeler.backend.labels import LabelSidecarStore, LabelValidationError
 from bathy_labeler.backend.proposals import generate_seeded_proposal
+from bathy_labeler.backend.reprocess import ReprocessSession
 
 
 def create_app(store: Atl24Store, label_store: LabelSidecarStore, static_dir: Path | None = None) -> FastAPI:
@@ -73,6 +74,81 @@ def create_app(store: Atl24Store, label_store: LabelSidecarStore, static_dir: Pa
         except LabelValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"status": sidecar.status, "rows": sidecar.rows, "metadata": sidecar.metadata}
+
+    if static_dir is not None:
+        _mount_static_app(app, static_dir)
+
+    return app
+
+
+def create_reprocess_app(session: ReprocessSession, static_dir: Path | None = None) -> FastAPI:
+    app = FastAPI(title="ATL24 Reprocess Labeler", version="0.2.0")
+
+    @app.get("/health")
+    def health() -> dict[str, object]:
+        manifest = session.manifest()
+        return {"status": "ok", **manifest}
+
+    @app.get("/manifest")
+    def manifest() -> dict[str, object]:
+        return session.manifest()
+
+    @app.post("/reprocess/session")
+    def configure_session(body: dict[str, Any]) -> dict[str, object]:
+        try:
+            return session.configure(input_dir=body["input_dir"], output_dir=body.get("output_dir") or None)
+        except (FileNotFoundError, NotADirectoryError, KeyError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/reprocess/sources")
+    def reprocess_sources() -> dict[str, object]:
+        try:
+            return session.sources_payload()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/reprocess/beam")
+    def reprocess_beam(source: str, beam: str) -> dict[str, object]:
+        try:
+            return session.read_beam(source, beam)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/reprocess/proposal")
+    def reprocess_proposal(body: dict[str, Any]) -> dict[str, object]:
+        try:
+            return session.propose(
+                source_relative_path=str(body["source"]),
+                beam=str(body["beam"]),
+                seeds=list(body.get("seeds", [])),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/reprocess/reset")
+    def reprocess_reset(body: dict[str, Any]) -> dict[str, object]:
+        try:
+            return session.reset_beam(source_relative_path=str(body["source"]), beam=str(body["beam"]))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/reprocess/save")
+    def reprocess_save(body: dict[str, Any]) -> dict[str, object]:
+        try:
+            return session.save_source(
+                source_relative_path=str(body["source"]),
+                beam_labels=dict(body.get("beam_labels", {})),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if static_dir is not None:
         _mount_static_app(app, static_dir)

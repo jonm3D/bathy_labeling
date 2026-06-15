@@ -4,15 +4,43 @@ import "./styles.css";
 import {
   acceptProposal,
   createDefaultLabels,
-  importAtl24Classifications,
   labelSelectionWithMode,
   toggleLabelMode,
 } from "./labelState.js";
 import { createMap } from "./mapView.js";
 import { clearProfile, renderProfile, type ProfileSettings } from "./profilePlot.js";
-import { fetchLabels, fetchSegment, fetchSegments, requestProposal, saveLabels } from "./api.js";
-import type { FinalLabel, LabelRow, SegmentPayload, SegmentSummary } from "./types.js";
+import {
+  configureReprocessSession,
+  fetchLabels,
+  fetchManifest,
+  fetchReprocessBeam,
+  fetchReprocessSources,
+  fetchSegment,
+  fetchSegments,
+  requestProposal,
+  requestReprocessProposal,
+  resetReprocessBeam,
+  saveLabels,
+  saveReprocessSource,
+} from "./api.js";
+import type {
+  FinalLabel,
+  LabelRow,
+  ManifestPayload,
+  ReprocessBeamPayload,
+  ReprocessSource,
+  SegmentPayload,
+  SegmentSummary,
+} from "./types.js";
 
+type AppMode = "reprocess" | "training";
+
+const setupPanel = requireElement("setup-panel");
+const inputDir = requireInput("input-dir");
+const outputDir = requireInput("output-dir");
+const loadSessionButton = requireButton("load-session");
+const openHeading = requireElement("open-heading");
+const completeSection = requireElement("complete-section");
 const openList = requireElement("segments-open");
 const completeList = requireElement("segments-complete");
 const segmentCount = requireElement("segment-count");
@@ -22,8 +50,7 @@ const profile = requireElement("profile");
 const mapContainer = requireElement("map");
 const classButtons = requireElement("class-buttons");
 const runProposal = requireButton("run-proposal");
-const importAtl24 = requireButton("import-atl24");
-const acceptProposalButton = requireButton("accept-proposal");
+const resetAtl24 = requireButton("reset-atl24");
 const saveLabelsButton = requireButton("save-labels");
 const pointSize = requireInput("point-size");
 const pointOpacity = requireInput("point-opacity");
@@ -31,16 +58,25 @@ const classModeButtons = Array.from(classButtons.querySelectorAll<HTMLButtonElem
 
 const mapView = createMap(mapContainer);
 
+let appMode: AppMode = "reprocess";
 let segments: SegmentSummary[] = [];
+let reprocessSources: ReprocessSource[] = [];
 let currentPayload: SegmentPayload | null = null;
 let currentLabels: LabelRow[] = [];
-let proposalRows: LabelRow[] = [];
 let selectedRows = new Set<number>();
 let activeLabel: FinalLabel | null = null;
 let settings: ProfileSettings = readSettings();
+let currentSegmentId: string | null = null;
+let currentSource: string | null = null;
+let currentBeam: string | null = null;
+const reprocessLabelCache = new Map<string, LabelRow[]>();
 
 updateClassModeButtons();
-void loadSegments();
+void boot();
+
+loadSessionButton.addEventListener("click", () => {
+  void configureAndLoadReprocessSession();
+});
 
 classButtons.addEventListener("click", (event) => {
   const target = event.target;
@@ -60,31 +96,22 @@ runProposal.addEventListener("click", async () => {
   if (!currentPayload) {
     return;
   }
-  setStatus("Running proposal");
-  const seeds = currentLabels.filter((row) => row.label_source === "manual");
-  const proposal = await requestProposal(currentPayload.segment.segment_id, seeds);
-  proposalRows = proposal.rows;
-  currentLabels = acceptProposal(currentLabels, proposal.rows);
-  setStatus(`Proposal ready: ${countLabels(proposal.rows)}`);
-  await rerender();
+  if (appMode === "reprocess") {
+    await runReprocessProposal();
+  } else {
+    await runTrainingProposal();
+  }
 });
 
-importAtl24.addEventListener("click", async () => {
-  if (!currentPayload) {
+resetAtl24.addEventListener("click", async () => {
+  if (appMode !== "reprocess" || !currentSource || !currentBeam) {
     return;
   }
-  currentLabels = importAtl24Classifications(currentLabels, currentPayload.assigned.atl24_class_ph);
-  proposalRows = [];
-  setStatus(`Imported ATL24: ${countLabels(currentLabels)}`);
-  await rerender();
-});
-
-acceptProposalButton.addEventListener("click", async () => {
-  if (proposalRows.length === 0) {
-    return;
-  }
-  currentLabels = acceptProposal(currentLabels, proposalRows);
-  setStatus(`Proposal accepted: ${countLabels(currentLabels)}`);
+  const reset = await resetReprocessBeam(currentSource, currentBeam);
+  currentLabels = reset.rows;
+  selectedRows = new Set();
+  cacheCurrentReprocessLabels();
+  setStatus("Reset to ATL24");
   await rerender();
 });
 
@@ -92,12 +119,11 @@ saveLabelsButton.addEventListener("click", async () => {
   if (!currentPayload) {
     return;
   }
-  setStatus("Saving");
-  const saved = await saveLabels(currentPayload.segment.segment_id, currentLabels);
-  currentLabels = saved.rows;
-  proposalRows = [];
-  setStatus("Saved");
-  await loadSegments(currentPayload.segment.segment_id);
+  if (appMode === "reprocess") {
+    await saveCurrentReprocessSource();
+  } else {
+    await saveCurrentTrainingSegment();
+  }
 });
 
 for (const input of [pointSize, pointOpacity]) {
@@ -105,6 +131,183 @@ for (const input of [pointSize, pointOpacity]) {
     settings = readSettings();
     void rerender();
   });
+}
+
+async function boot(): Promise<void> {
+  setStatus("Loading");
+  const manifest = await fetchManifest();
+  if (manifest.mode === "reprocess") {
+    await initializeReprocessMode(manifest);
+  } else {
+    await initializeTrainingMode();
+  }
+}
+
+async function initializeReprocessMode(manifest: ManifestPayload): Promise<void> {
+  appMode = "reprocess";
+  setupPanel.hidden = false;
+  completeSection.hidden = true;
+  openHeading.textContent = "Files & Beams";
+  runProposal.textContent = "Run Smart Labeler";
+  resetAtl24.hidden = false;
+  saveLabelsButton.textContent = "Save H5";
+  inputDir.value = manifest.input_dir ?? "";
+  outputDir.value = manifest.output_dir ?? manifest.suggested_output_dir ?? defaultOutputDir(inputDir.value);
+  if (manifest.configured) {
+    if (!manifest.output_dir && inputDir.value && outputDir.value) {
+      await configureReprocessSession(inputDir.value, outputDir.value);
+    }
+    await loadReprocessSources();
+  } else {
+    segmentCount.textContent = "Choose folders";
+    activeSegment.textContent = "No beam selected";
+    setStatus("");
+  }
+}
+
+async function configureAndLoadReprocessSession(): Promise<void> {
+  const inputValue = inputDir.value.trim();
+  if (!inputValue) {
+    setStatus("Input folder required");
+    return;
+  }
+  if (!outputDir.value.trim()) {
+    outputDir.value = defaultOutputDir(inputValue);
+  }
+  setStatus("Loading ATL24 folder");
+  await configureReprocessSession(inputValue, outputDir.value.trim());
+  reprocessLabelCache.clear();
+  currentPayload = null;
+  currentLabels = [];
+  selectedRows = new Set();
+  await loadReprocessSources();
+}
+
+async function loadReprocessSources(): Promise<void> {
+  const payload = await fetchReprocessSources();
+  reprocessSources = payload.sources;
+  segmentCount.textContent = `${payload.count.toLocaleString()} files`;
+  renderReprocessSourceList();
+  const first = reprocessSources[0];
+  if (first?.beams[0]) {
+    await selectReprocessBeam(first.source_relative_path, first.beams[0]);
+  } else {
+    clearProfile(profile);
+    activeSegment.textContent = "No beam selected";
+    setStatus("No ATL24 beams found");
+  }
+}
+
+function renderReprocessSourceList(): void {
+  openList.replaceChildren(
+    ...reprocessSources.flatMap((source) => source.beams.map((beam) => reprocessBeamButton(source, beam))),
+  );
+  completeList.replaceChildren();
+}
+
+function reprocessBeamButton(source: ReprocessSource, beam: string): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "segment-button";
+  button.dataset.source = source.source_relative_path;
+  button.dataset.beam = beam;
+  button.innerHTML = `<span>${source.file_name} ${beam}</span><small>${source.source_relative_path}</small>`;
+  button.addEventListener("click", () => {
+    void selectReprocessBeam(source.source_relative_path, beam);
+  });
+  return button;
+}
+
+async function selectReprocessBeam(source: string, beam: string): Promise<void> {
+  setStatus("Loading beam");
+  const payload = await fetchReprocessBeam(source, beam);
+  currentSource = source;
+  currentBeam = beam;
+  currentSegmentId = null;
+  currentPayload = segmentPayloadFromBeam(payload);
+  currentLabels = cloneLabels(reprocessLabelCache.get(cacheKey(source, beam)) ?? payload.labels);
+  selectedRows = new Set();
+  mapView.setSegment(currentPayload);
+  activeSegment.textContent = `${payload.beam.file_name} ${beam} · full track`;
+  await rerender();
+  setStatus(`${payload.beam.photon_count.toLocaleString()} photons`);
+}
+
+function segmentPayloadFromBeam(payload: ReprocessBeamPayload): SegmentPayload {
+  return {
+    segment: {
+      segment_id: `${payload.beam.source_relative_path}::${payload.beam.beam}`,
+      inventory_version: "reprocess-full-beam-v1",
+      segment_config_version: "full-track",
+      stable_source_file_id: payload.beam.source_relative_path,
+      source_relative_path: payload.beam.source_relative_path,
+      source_label: payload.source.source_label,
+      file_name: payload.beam.file_name,
+      beam: payload.beam.beam,
+      x_atc_start_m: payload.beam.x_atc_start_m,
+      x_atc_end_m: payload.beam.x_atc_end_m,
+      context_x_atc_start_m: payload.beam.x_atc_start_m,
+      context_x_atc_end_m: payload.beam.x_atc_end_m,
+      photon_count: payload.beam.photon_count,
+      day_night: payload.beam.day_night,
+      beam_strength: payload.beam.beam_strength,
+      status: "unlabeled",
+    },
+    assigned: payload.photons,
+    context: payload.photons,
+  };
+}
+
+async function runReprocessProposal(): Promise<void> {
+  if (!currentSource || !currentBeam) {
+    return;
+  }
+  setStatus("Running smart labeler");
+  const seeds = currentLabels.filter((row) => row.label_source === "manual");
+  const proposal = await requestReprocessProposal(currentSource, currentBeam, seeds);
+  currentLabels = acceptProposal(currentLabels, proposal.rows);
+  selectedRows = new Set();
+  cacheCurrentReprocessLabels();
+  setStatus(`Smart labeler ready: ${countLabels(currentLabels)}`);
+  await rerender();
+}
+
+async function saveCurrentReprocessSource(): Promise<void> {
+  if (!currentSource || !currentBeam) {
+    return;
+  }
+  cacheCurrentReprocessLabels();
+  setStatus("Saving H5");
+  const saved = await saveReprocessSource(currentSource, beamLabelsForSource(currentSource));
+  setStatus(`Saved ${saved.output_path}`);
+}
+
+function cacheCurrentReprocessLabels(): void {
+  if (currentSource && currentBeam) {
+    reprocessLabelCache.set(cacheKey(currentSource, currentBeam), cloneLabels(currentLabels));
+  }
+}
+
+function beamLabelsForSource(source: string): Record<string, LabelRow[]> {
+  const labelsByBeam: Record<string, LabelRow[]> = {};
+  for (const [key, labels] of reprocessLabelCache.entries()) {
+    const [cachedSource, cachedBeam] = key.split("\u0000");
+    if (cachedSource === source && cachedBeam) {
+      labelsByBeam[cachedBeam] = cloneLabels(labels);
+    }
+  }
+  return labelsByBeam;
+}
+
+async function initializeTrainingMode(): Promise<void> {
+  appMode = "training";
+  setupPanel.hidden = true;
+  completeSection.hidden = false;
+  openHeading.textContent = "To Label";
+  runProposal.textContent = "Run Proposal";
+  resetAtl24.hidden = true;
+  saveLabelsButton.textContent = "Done";
+  await loadSegments();
 }
 
 async function loadSegments(selectSegmentId?: string): Promise<void> {
@@ -150,12 +353,38 @@ async function selectSegment(segmentId: string): Promise<void> {
     labels.status === "complete"
       ? labels.rows
       : createDefaultLabels(currentPayload.assigned.source_row);
-  proposalRows = [];
+  currentSegmentId = segmentId;
+  currentSource = null;
+  currentBeam = null;
   selectedRows = new Set();
   activeSegment.textContent = `${currentPayload.segment.file_name} ${currentPayload.segment.beam} · ${formatKm(currentPayload.segment.x_atc_start_m)}-${formatKm(currentPayload.segment.x_atc_end_m)} km`;
   mapView.setSegment(currentPayload);
   await rerender();
   setStatus(`${currentPayload.assigned.source_row.length.toLocaleString()} assigned photons`);
+}
+
+async function runTrainingProposal(): Promise<void> {
+  if (!currentPayload) {
+    return;
+  }
+  setStatus("Running proposal");
+  const seeds = currentLabels.filter((row) => row.label_source === "manual");
+  const proposal = await requestProposal(currentPayload.segment.segment_id, seeds);
+  currentLabels = acceptProposal(currentLabels, proposal.rows);
+  selectedRows = new Set();
+  setStatus(`Proposal ready: ${countLabels(currentLabels)}`);
+  await rerender();
+}
+
+async function saveCurrentTrainingSegment(): Promise<void> {
+  if (!currentSegmentId) {
+    return;
+  }
+  setStatus("Saving");
+  const saved = await saveLabels(currentSegmentId, currentLabels);
+  currentLabels = saved.rows;
+  setStatus("Saved");
+  await loadSegments(currentSegmentId);
 }
 
 async function rerender(): Promise<void> {
@@ -171,7 +400,9 @@ async function handleProfileSelection(rows: Set<number>): Promise<void> {
   selectedRows = rows;
   if (activeLabel && rows.size > 0) {
     currentLabels = labelSelectionWithMode(currentLabels, rows, activeLabel);
-    proposalRows = [];
+    if (appMode === "reprocess") {
+      cacheCurrentReprocessLabels();
+    }
     setStatus(`Set ${rows.size.toLocaleString()} ${formatLabel(activeLabel).toLowerCase()} photons`);
   }
   await rerender();
@@ -202,6 +433,19 @@ function updateClassModeButtons(): void {
     button.setAttribute("aria-pressed", String(isActive));
     button.classList.toggle("is-active", isActive);
   }
+}
+
+function defaultOutputDir(inputPath: string): string {
+  const trimmed = inputPath.trim().replace(/\/+$/, "");
+  return trimmed ? `${trimmed}_labeled` : "";
+}
+
+function cacheKey(source: string, beam: string): string {
+  return `${source}\u0000${beam}`;
+}
+
+function cloneLabels(labels: LabelRow[]): LabelRow[] {
+  return labels.map((row) => ({ ...row }));
 }
 
 function formatLabel(label: FinalLabel): string {

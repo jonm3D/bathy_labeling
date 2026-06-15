@@ -1,5 +1,6 @@
 import Plotly from "plotly.js-dist-min";
 import type { FinalLabel, LabelRow, SegmentPayload } from "./types.js";
+import { manualSeedRowsForPlot } from "./plotRows.js";
 
 export interface ProfileSettings {
   pointSize: number;
@@ -30,6 +31,7 @@ export async function renderProfile(
   const contextRows = payload.context.source_row.map((sourceRow, index) => ({ sourceRow, index }));
   const assignedRows = payload.assigned.source_row.map((sourceRow, index) => ({ sourceRow, index }));
   const selected = assignedRows.filter((row) => selectedRows.has(row.sourceRow));
+  const manualSeeds = manualSeedRowsForPlot(labels, assignedRows);
   const sameSegment = container.dataset.segmentId === payload.segment.segment_id;
   const storedRangeState = RANGE_BY_CONTAINER.get(container);
   const storedRanges =
@@ -82,6 +84,22 @@ export async function renderProfile(
           line: { width: 2, color: "#111827" },
         },
         hovertemplate: "selected row %{customdata}<extra></extra>",
+      },
+      {
+        type: "scattergl",
+        mode: "markers",
+        name: "Manual seeds",
+        x: manualSeeds.map((row) => payload.assigned.x_atc_m[row.index] / 1000),
+        y: manualSeeds.map((row) => payload.assigned.ortho_h_m[row.index]),
+        customdata: manualSeeds.map((row) => row.sourceRow),
+        marker: {
+          color: "rgba(255, 255, 255, 0)",
+          size: settings.pointSize + 6,
+          opacity: 0.95,
+          symbol: "circle-open",
+          line: { width: 2, color: "#f97316" },
+        },
+        hovertemplate: "manual seed row %{customdata}<extra></extra>",
       },
     ],
     {

@@ -1,4 +1,14 @@
-import type { LabelPayload, LabelRow, ProposalPayload, SegmentListPayload, SegmentPayload } from "./types.js";
+import type {
+  LabelPayload,
+  LabelRow,
+  ManifestPayload,
+  ProposalPayload,
+  ReprocessBeamPayload,
+  ReprocessSavePayload,
+  ReprocessSourceListPayload,
+  SegmentListPayload,
+  SegmentPayload,
+} from "./types.js";
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -19,6 +29,15 @@ export function buildLabelsUrl(segmentId: string): string {
 
 export function buildProposalUrl(segmentId: string): string {
   return `${buildSegmentUrl(segmentId)}/proposal`;
+}
+
+export function buildReprocessBeamUrl(source: string, beam: string): string {
+  const params = new URLSearchParams({ source, beam });
+  return `/reprocess/beam?${params.toString()}`;
+}
+
+export function fetchManifest(): Promise<ManifestPayload> {
+  return fetchJson<ManifestPayload>("/manifest");
 }
 
 export function fetchSegments(): Promise<SegmentListPayload> {
@@ -46,5 +65,48 @@ export function saveLabels(segmentId: string, labels: LabelRow[]): Promise<Label
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ labels }),
+  });
+}
+
+export function configureReprocessSession(inputDir: string, outputDir: string): Promise<ManifestPayload> {
+  return fetchJson<ManifestPayload>("/reprocess/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ input_dir: inputDir, output_dir: outputDir }),
+  });
+}
+
+export function fetchReprocessSources(): Promise<ReprocessSourceListPayload> {
+  return fetchJson<ReprocessSourceListPayload>("/reprocess/sources");
+}
+
+export function fetchReprocessBeam(source: string, beam: string): Promise<ReprocessBeamPayload> {
+  return fetchJson<ReprocessBeamPayload>(buildReprocessBeamUrl(source, beam));
+}
+
+export function requestReprocessProposal(source: string, beam: string, seeds: LabelRow[]): Promise<ProposalPayload> {
+  return fetchJson<ProposalPayload>("/reprocess/proposal", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source, beam, seeds }),
+  });
+}
+
+export function resetReprocessBeam(source: string, beam: string): Promise<ProposalPayload> {
+  return fetchJson<ProposalPayload>("/reprocess/reset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source, beam }),
+  });
+}
+
+export function saveReprocessSource(
+  source: string,
+  beamLabels: Record<string, LabelRow[]>,
+): Promise<ReprocessSavePayload> {
+  return fetchJson<ReprocessSavePayload>("/reprocess/save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source, beam_labels: beamLabels }),
   });
 }

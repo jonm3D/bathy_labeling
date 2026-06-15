@@ -12,12 +12,23 @@
           <h1>ATL24 Smart Labeler</h1>
           <p id="segment-count">Loading</p>
         </header>
+        <section class="setup-panel" id="setup-panel">
+          <label>
+            Input
+            <input id="input-dir" type="text" placeholder="/path/to/ATL24_folder" autocomplete="off" />
+          </label>
+          <label>
+            Output
+            <input id="output-dir" type="text" placeholder="/path/to/ATL24_folder_labeled" autocomplete="off" />
+          </label>
+          <button type="button" id="load-session">Load</button>
+        </section>
         <div class="segment-lists">
           <section>
-            <h2>To Label</h2>
+            <h2 id="open-heading">Files & Beams</h2>
             <div id="segments-open" class="segment-list"></div>
           </section>
-          <section>
+          <section id="complete-section">
             <h2>Labeled</h2>
             <div id="segments-complete" class="segment-list"></div>
           </section>
@@ -33,10 +44,9 @@
             <button type="button" data-label="ambiguous">Ambiguous</button>
           </div>
           <div class="actions">
-            <button type="button" id="run-proposal">Run Proposal</button>
-            <button type="button" id="import-atl24">Import ATL24</button>
-            <button type="button" id="accept-proposal">Accept Proposal</button>
-            <button type="button" id="save-labels">Done</button>
+            <button type="button" id="run-proposal">Run Smart Labeler</button>
+            <button type="button" id="reset-atl24">Reset to ATL24</button>
+            <button type="button" id="save-labels">Save H5</button>
           </div>
           <label>
             Size
