@@ -1,4 +1,4 @@
-export type FinalLabel = "surface" | "bathy" | "land" | "noise" | "ambiguous";
+export type FinalLabel = "surface" | "bathy" | "no_label" | "land" | "noise" | "ambiguous";
 export type LabelSource = "manual" | "auto";
 export type SegmentStatus = "unlabeled" | "draft" | "complete" | "stale" | "conflict";
 
@@ -105,8 +105,4 @@ export interface ReprocessSavePayload {
   source: string;
   output_path: string;
   written_beams: string[];
-}
-
-export interface ReprocessDirectorySelectionPayload {
-  path: string | null;
 }

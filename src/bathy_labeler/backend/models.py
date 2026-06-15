@@ -7,13 +7,13 @@ from typing import Literal
 BEAM_NAMES = ("gt1l", "gt1r", "gt2l", "gt2r", "gt3l", "gt3r")
 REQUIRED_DATASETS = ("lon_ph", "lat_ph", "x_atc", "ortho_h", "surface_h", "index_ph", "night_flag")
 OPTIONAL_DATASETS = ("class_ph",)
-FINAL_LABELS = ("surface", "bathy", "land", "noise", "ambiguous")
+FINAL_LABELS = ("surface", "bathy", "no_label", "land", "noise", "ambiguous")
 LABEL_SOURCES = ("manual", "auto")
 
 BeamStrength = Literal["strong", "weak"]
 DayNight = Literal["day", "night"]
 SegmentStatus = Literal["unlabeled", "draft", "complete", "stale", "conflict"]
-FinalLabel = Literal["surface", "bathy", "land", "noise", "ambiguous"]
+FinalLabel = Literal["surface", "bathy", "no_label", "land", "noise", "ambiguous"]
 LabelSource = Literal["manual", "auto"]
 
 

@@ -9,15 +9,13 @@ import h5py
 import numpy as np
 
 from bathy_labeler.backend.hdf5_store import _beam_strength, _read_photon_rows, _read_sc_orient, _validate_beam_lengths
-from bathy_labeler.backend.models import BEAM_NAMES, FINAL_LABELS, REQUIRED_DATASETS, FinalLabel, PhotonTable
+from bathy_labeler.backend.models import BEAM_NAMES, REQUIRED_DATASETS, FinalLabel, PhotonTable
 from bathy_labeler.backend.proposals import generate_seeded_proposal
 
 LABEL_TO_CLASS_PH: dict[FinalLabel, int] = {
     "surface": 41,
     "bathy": 40,
-    "land": 0,
-    "noise": 0,
-    "ambiguous": 0,
+    "no_label": 0,
 }
 
 
@@ -100,6 +98,7 @@ class ReprocessSession:
                 context=photons,
                 beam_strength=_beam_strength(beam, sc_orient),
                 seeds=seeds,
+                residual_label="no_label",
             )
         return {"rows": result.rows, "metadata": result.metadata}
 
@@ -189,7 +188,7 @@ def label_from_class_ph(class_ph: int | None) -> FinalLabel:
         return "surface"
     if class_ph == 40:
         return "bathy"
-    return "noise"
+    return "no_label"
 
 
 def _valid_beams(path: Path) -> list[str]:
@@ -246,7 +245,7 @@ def _class_values_for_group(group: h5py.Group, labels: list[dict[str, Any]]) -> 
         if source_row < 0 or source_row >= count:
             raise ValueError(f"source_row out of bounds: {source_row}")
         label = str(row["label"])
-        if label not in FINAL_LABELS:
+        if label not in LABEL_TO_CLASS_PH:
             raise ValueError(f"Invalid label: {label}")
         values[source_row] = LABEL_TO_CLASS_PH[label]  # type: ignore[index]
     return values.astype(np.int16)

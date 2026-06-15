@@ -93,12 +93,6 @@ input {
   font-size: 12px;
 }
 
-.path-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px;
-}
-
 .setup-panel input {
   min-width: 0;
   height: 28px;

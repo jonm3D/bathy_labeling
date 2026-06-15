@@ -16,28 +16,16 @@
           <section class="setup-panel" id="setup-panel">
             <label>
               Input
-              <span class="path-row">
-                <input id="input-dir" type="text" placeholder="/path/to/ATL24_folder" autocomplete="off" />
-                <button type="button" id="pick-input-dir">Choose</button>
-              </span>
+              <input id="input-dir" type="text" placeholder="/absolute/path/to/ATL24_folder" autocomplete="off" />
             </label>
             <label>
               Output
-              <span class="path-row">
-                <input id="output-dir" type="text" placeholder="/path/to/ATL24_folder_labeled" autocomplete="off" />
-                <button type="button" id="pick-output-dir">Choose</button>
-              </span>
+              <input id="output-dir" type="text" placeholder="/absolute/path/to/ATL24_folder_labeled" autocomplete="off" />
             </label>
             <button type="button" id="load-session">Load</button>
           </section>
           <section class="toolbar" aria-label="Label controls">
-            <div class="class-buttons" id="class-buttons" role="group" aria-label="Active label mode">
-              <button type="button" data-label="surface">Surface</button>
-              <button type="button" data-label="bathy">Bathy</button>
-              <button type="button" data-label="land">Land</button>
-              <button type="button" data-label="noise">Noise</button>
-              <button type="button" data-label="ambiguous">Ambiguous</button>
-            </div>
+            <div class="class-buttons" id="class-buttons" role="group" aria-label="Active label mode"></div>
             <div class="actions">
               <button type="button" id="run-proposal">Run Smart Labeler</button>
               <button type="button" id="reset-atl24">Reset to ATL24</button>

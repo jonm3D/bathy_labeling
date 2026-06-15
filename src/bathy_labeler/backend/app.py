@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -8,13 +7,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from bathy_labeler.backend.folder_picker import choose_directory
 from bathy_labeler.backend.hdf5_store import Atl24Store
 from bathy_labeler.backend.labels import LabelSidecarStore, LabelValidationError
 from bathy_labeler.backend.proposals import generate_seeded_proposal
 from bathy_labeler.backend.reprocess import ReprocessSession
-
-DirectoryPicker = Callable[[str, str | None], str | None]
 
 
 def create_app(store: Atl24Store, label_store: LabelSidecarStore, static_dir: Path | None = None) -> FastAPI:
@@ -88,10 +84,8 @@ def create_app(store: Atl24Store, label_store: LabelSidecarStore, static_dir: Pa
 def create_reprocess_app(
     session: ReprocessSession,
     static_dir: Path | None = None,
-    directory_picker: DirectoryPicker | None = None,
 ) -> FastAPI:
     app = FastAPI(title="ATL24 Reprocess Labeler", version="0.2.0")
-    pick_directory = directory_picker or choose_directory
 
     @app.get("/health")
     def health() -> dict[str, object]:
@@ -108,17 +102,6 @@ def create_reprocess_app(
             return session.configure(input_dir=body["input_dir"], output_dir=body.get("output_dir") or None)
         except (FileNotFoundError, NotADirectoryError, KeyError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    @app.post("/reprocess/select-directory")
-    def select_directory(body: dict[str, Any]) -> dict[str, str | None]:
-        try:
-            path = pick_directory(
-                str(body.get("title") or "Select Folder"),
-                str(body["initial_dir"]) if body.get("initial_dir") else None,
-            )
-        except RuntimeError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        return {"path": path}
 
     @app.get("/reprocess/sources")
     def reprocess_sources() -> dict[str, object]:

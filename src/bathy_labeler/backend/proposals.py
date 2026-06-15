@@ -25,13 +25,16 @@ def generate_seeded_proposal(
     context: PhotonTable,
     beam_strength: BeamStrength,
     seeds: list[dict[str, Any]],
+    residual_label: str = "noise",
 ) -> ProposalResult:
+    if residual_label not in FINAL_LABELS:
+        raise ValueError(f"Invalid residual label: {residual_label}")
     seed_by_row = _seed_by_row(seeds)
     feature_table = build_feature_table(assigned, context, beam_strength)
     matrix = _scaled_matrix(feature_table.matrix(CENTROID_FEATURES))
     row_positions = {source_row: index for index, source_row in enumerate(assigned.source_row)}
     seeded_non_noise = sorted(
-        {label for label in seed_by_row.values() if label != "noise"}
+        {label for label in seed_by_row.values() if label != residual_label}
     )
     centroids = _centroids(matrix, row_positions, seed_by_row, seeded_non_noise)
 
@@ -40,9 +43,9 @@ def generate_seeded_proposal(
         if source_row in seed_by_row:
             rows.append({"source_row": int(source_row), "label": seed_by_row[source_row], "label_source": "manual"})
             continue
-        label = "noise"
+        label = residual_label
         if len(centroids) >= 2:
-            label = _nearest_centroid_label(matrix[position], centroids)
+            label = _nearest_centroid_label(matrix[position], centroids, fallback_label=residual_label)
         rows.append({"source_row": int(source_row), "label": label, "label_source": "auto"})
 
     proposal_counts = Counter(str(row["label"]) for row in rows)
@@ -99,8 +102,8 @@ def _centroids(
     return centroids
 
 
-def _nearest_centroid_label(vector: np.ndarray, centroids: dict[str, np.ndarray]) -> str:
-    best_label = "noise"
+def _nearest_centroid_label(vector: np.ndarray, centroids: dict[str, np.ndarray], fallback_label: str) -> str:
+    best_label = fallback_label
     best_distance = float("inf")
     for label, centroid in sorted(centroids.items()):
         distance = float(np.linalg.norm(vector - centroid))

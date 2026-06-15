@@ -49,7 +49,7 @@ def test_full_beam_payload_uses_original_atl24_classifications(tmp_path: Path) -
         {"source_row": 2, "label": "surface", "label_source": "auto"},
     ]
     assert payload["labels"][20] == {"source_row": 20, "label": "bathy", "label_source": "auto"}
-    assert payload["labels"][-1] == {"source_row": 149, "label": "noise", "label_source": "auto"}
+    assert payload["labels"][-1] == {"source_row": 149, "label": "no_label", "label_source": "auto"}
 
 
 def test_save_creates_manual_h5_and_rewrites_only_target_beam_classifications(tmp_path: Path) -> None:
@@ -60,8 +60,8 @@ def test_save_creates_manual_h5_and_rewrites_only_target_beam_classifications(tm
         for row in payload["labels"]
     ]
     labels[0] = {"source_row": 0, "label": "bathy", "label_source": "manual"}
-    labels[1] = {"source_row": 1, "label": "land", "label_source": "manual"}
-    labels[2] = {"source_row": 2, "label": "ambiguous", "label_source": "manual"}
+    labels[1] = {"source_row": 1, "label": "no_label", "label_source": "manual"}
+    labels[2] = {"source_row": 2, "label": "surface", "label_source": "manual"}
 
     result = session.save_source("Guam/ATL24_sample.h5", {"gt1l": labels})
 
@@ -71,7 +71,7 @@ def test_save_creates_manual_h5_and_rewrites_only_target_beam_classifications(tm
     with h5py.File(tmp_path / "ATL24_inputs" / "Guam" / "ATL24_sample.h5", "r") as original:
         with h5py.File(output_path, "r") as manual:
             assert manual.attrs["rgt"] == original.attrs["rgt"]
-            assert manual["gt1l"]["class_ph"][:5].tolist() == [40, 0, 0, 41, 41]
+            assert manual["gt1l"]["class_ph"][:5].tolist() == [40, 0, 41, 41, 41]
             assert manual["gt1r"]["class_ph"][:].tolist() == original["gt1r"]["class_ph"][:].tolist()
 
 
@@ -79,9 +79,7 @@ def test_label_to_class_mapping_matches_atl24_codes() -> None:
     assert LABEL_TO_CLASS_PH == {
         "surface": 41,
         "bathy": 40,
-        "land": 0,
-        "noise": 0,
-        "ambiguous": 0,
+        "no_label": 0,
     }
 
 
@@ -109,4 +107,18 @@ def test_reset_returns_original_atl24_labels(tmp_path: Path) -> None:
 
     assert reset["rows"][0] == {"source_row": 0, "label": "surface", "label_source": "auto"}
     assert reset["rows"][20] == {"source_row": 20, "label": "bathy", "label_source": "auto"}
-    assert reset["rows"][-1] == {"source_row": 149, "label": "noise", "label_source": "auto"}
+    assert reset["rows"][-1] == {"source_row": 149, "label": "no_label", "label_source": "auto"}
+
+
+def test_full_beam_proposal_uses_no_label_for_default_residual_class(tmp_path: Path) -> None:
+    session = make_session(tmp_path)
+
+    proposal = session.propose(
+        "Guam/ATL24_sample.h5",
+        "gt1l",
+        seeds=[{"source_row": 0, "label": "surface", "label_source": "manual"}],
+    )
+
+    labels = {row["label"] for row in proposal["rows"]}
+    assert labels <= {"surface", "no_label"}
+    assert proposal["rows"][-1]["label"] == "no_label"

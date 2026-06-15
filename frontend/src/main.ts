@@ -5,6 +5,7 @@ import {
   acceptProposal,
   createDefaultLabels,
   labelSelectionWithMode,
+  labelsForAppMode,
   toggleLabelMode,
 } from "./labelState.js";
 import { createMap } from "./mapView.js";
@@ -22,7 +23,6 @@ import {
   resetReprocessBeam,
   saveLabels,
   saveReprocessSource,
-  selectReprocessDirectory,
 } from "./api.js";
 import type {
   FinalLabel,
@@ -40,8 +40,6 @@ const setupPanel = requireElement("setup-panel");
 const inputDir = requireInput("input-dir");
 const outputDir = requireInput("output-dir");
 const loadSessionButton = requireButton("load-session");
-const pickInputDirButton = requireButton("pick-input-dir");
-const pickOutputDirButton = requireButton("pick-output-dir");
 const fileHeading = requireElement("file-heading");
 const beamHeading = requireElement("beam-heading");
 const fileList = requireElement("file-list");
@@ -57,7 +55,7 @@ const resetAtl24 = requireButton("reset-atl24");
 const saveLabelsButton = requireButton("save-labels");
 const pointSize = requireInput("point-size");
 const pointOpacity = requireInput("point-opacity");
-const classModeButtons = Array.from(classButtons.querySelectorAll<HTMLButtonElement>("button[data-label]"));
+let classModeButtons: HTMLButtonElement[] = [];
 
 const mapView = createMap(mapContainer);
 
@@ -75,19 +73,11 @@ let currentBeam: string | null = null;
 let selectedReprocessSource: string | null = null;
 const reprocessLabelCache = new Map<string, LabelRow[]>();
 
-updateClassModeButtons();
+configureLabelButtonsForMode("reprocess");
 void boot();
 
 loadSessionButton.addEventListener("click", () => {
   void configureAndLoadReprocessSession();
-});
-
-pickInputDirButton.addEventListener("click", () => {
-  void pickDirectory(inputDir, "Select ATL24 input folder", true);
-});
-
-pickOutputDirButton.addEventListener("click", () => {
-  void pickDirectory(outputDir, "Select output folder", false);
 });
 
 classButtons.addEventListener("click", (event) => {
@@ -160,6 +150,7 @@ async function initializeReprocessMode(manifest: ManifestPayload): Promise<void>
   setupPanel.hidden = false;
   fileHeading.textContent = "Files";
   beamHeading.textContent = "Beams";
+  configureLabelButtonsForMode("reprocess");
   runProposal.textContent = "Run Smart Labeler";
   resetAtl24.hidden = false;
   saveLabelsButton.textContent = "Save H5";
@@ -176,28 +167,6 @@ async function initializeReprocessMode(manifest: ManifestPayload): Promise<void>
     fileList.replaceChildren();
     beamList.replaceChildren();
     setStatus("");
-  }
-}
-
-async function pickDirectory(
-  input: HTMLInputElement,
-  title: string,
-  shouldSuggestOutput: boolean,
-): Promise<void> {
-  setStatus("Opening folder chooser");
-  try {
-    const selected = await selectReprocessDirectory(title, input.value.trim() || undefined);
-    if (!selected.path) {
-      setStatus("Folder selection cancelled");
-      return;
-    }
-    input.value = selected.path;
-    if (shouldSuggestOutput && !outputDir.value.trim()) {
-      outputDir.value = defaultOutputDir(selected.path);
-    }
-    setStatus("Folder selected");
-  } catch (error) {
-    setStatus(errorMessage(error));
   }
 }
 
@@ -372,6 +341,7 @@ async function initializeTrainingMode(): Promise<void> {
   setupPanel.hidden = true;
   fileHeading.textContent = "To Label";
   beamHeading.textContent = "Labeled";
+  configureLabelButtonsForMode("training");
   runProposal.textContent = "Run Proposal";
   resetAtl24.hidden = true;
   saveLabelsButton.textContent = "Done";
@@ -421,7 +391,7 @@ async function selectSegment(segmentId: string): Promise<void> {
   currentLabels =
     labels.status === "complete"
       ? labels.rows
-      : createDefaultLabels(currentPayload.assigned.source_row);
+      : createDefaultLabels(currentPayload.assigned.source_row, "noise");
   currentSegmentId = segmentId;
   currentSource = null;
   currentBeam = null;
@@ -492,7 +462,7 @@ function countLabels(labels: LabelRow[]): string {
   }
   return Array.from(counts.entries())
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([label, count]) => `${label} ${count}`)
+    .map(([label, count]) => `${formatLabel(label).toLowerCase()} ${count}`)
     .join(", ");
 }
 
@@ -503,6 +473,24 @@ function updateClassModeButtons(): void {
     button.setAttribute("aria-pressed", String(isActive));
     button.classList.toggle("is-active", isActive);
   }
+}
+
+function configureLabelButtonsForMode(mode: AppMode): void {
+  const options = labelsForAppMode(mode);
+  if (activeLabel && !options.some((option) => option.label === activeLabel)) {
+    activeLabel = null;
+  }
+  classButtons.replaceChildren(...options.map(labelModeButton));
+  classModeButtons = Array.from(classButtons.querySelectorAll<HTMLButtonElement>("button[data-label]"));
+  updateClassModeButtons();
+}
+
+function labelModeButton(option: { label: FinalLabel; text: string }): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.dataset.label = option.label;
+  button.textContent = option.text;
+  return button;
 }
 
 function updateReprocessSelectionButtons(): void {
@@ -534,6 +522,9 @@ function cloneLabels(labels: LabelRow[]): LabelRow[] {
 }
 
 function formatLabel(label: FinalLabel): string {
+  if (label === "no_label") {
+    return "No label";
+  }
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
@@ -543,10 +534,6 @@ function formatKm(meters: number): string {
 
 function setStatus(message: string): void {
   statusElement.textContent = message;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function requireElement(id: string): HTMLElement {
@@ -574,5 +561,12 @@ function requireInput(id: string): HTMLInputElement {
 }
 
 function isFinalLabel(value: string | undefined): value is FinalLabel {
-  return value === "surface" || value === "bathy" || value === "land" || value === "noise" || value === "ambiguous";
+  return (
+    value === "surface" ||
+    value === "bathy" ||
+    value === "no_label" ||
+    value === "land" ||
+    value === "noise" ||
+    value === "ambiguous"
+  );
 }
