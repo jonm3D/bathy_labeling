@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import h5py
+import numpy as np
 
 from bathy_labeler.backend.reprocess import LABEL_TO_CLASS_PH, ReprocessSession
 
@@ -15,6 +17,18 @@ def make_session(tmp_path: Path) -> ReprocessSession:
     write_atl24_like_file(input_dir / "Guam" / "ATL24_sample.h5")
     write_atl24_like_file(input_dir / "Guam" / "ATL24_sample_manual.h5")
     return ReprocessSession(input_dir=input_dir, output_dir=output_dir)
+
+
+def write_manual_output(session: ReprocessSession, source_relative_path: str, beam: str, class_ph: np.ndarray) -> Path:
+    assert session.input_dir is not None
+    assert session.output_dir is not None
+    source_path = session.input_dir / source_relative_path
+    output_path = session.output_dir / Path(source_relative_path).parent / f"{Path(source_relative_path).stem}_{beam}_manual.h5"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_path, output_path)
+    with h5py.File(output_path, "r+") as h5:
+        h5[beam]["class_ph"][:] = class_ph
+    return output_path
 
 
 def test_configuring_session_scans_original_h5_files_only(tmp_path: Path) -> None:
@@ -30,6 +44,32 @@ def test_configuring_session_scans_original_h5_files_only(tmp_path: Path) -> Non
     assert sources["sources"][0]["source_relative_path"] == "Guam/ATL24_sample.h5"
     assert sources["sources"][0]["file_name"] == "ATL24_sample.h5"
     assert sources["sources"][0]["beams"] == ["gt1l", "gt1r"]
+    assert sources["sources"][0]["status"] == "unclassified"
+    assert sources["sources"][0]["beam_count"] == 2
+    assert sources["sources"][0]["completed_beam_count"] == 0
+    assert sources["sources"][0]["beam_statuses"] == {"gt1l": "unclassified", "gt1r": "unclassified"}
+
+
+def test_sources_payload_reports_partial_and_complete_output_status(tmp_path: Path) -> None:
+    session = make_session(tmp_path)
+    payload = session.read_beam("Guam/ATL24_sample.h5", "gt1l")
+    gt1l_classes = np.full(len(payload["labels"]), 40, dtype=np.int16)
+    gt1r_classes = np.full(len(payload["labels"]), 41, dtype=np.int16)
+
+    write_manual_output(session, "Guam/ATL24_sample.h5", "gt1l", gt1l_classes)
+    partial = session.sources_payload()["sources"][0]
+
+    assert partial["status"] == "partial"
+    assert partial["beam_count"] == 2
+    assert partial["completed_beam_count"] == 1
+    assert partial["beam_statuses"] == {"gt1l": "complete", "gt1r": "unclassified"}
+
+    write_manual_output(session, "Guam/ATL24_sample.h5", "gt1r", gt1r_classes)
+    complete = session.sources_payload()["sources"][0]
+
+    assert complete["status"] == "complete"
+    assert complete["completed_beam_count"] == 2
+    assert complete["beam_statuses"] == {"gt1l": "complete", "gt1r": "complete"}
 
 
 def test_full_beam_payload_uses_original_atl24_classifications(tmp_path: Path) -> None:
@@ -50,6 +90,42 @@ def test_full_beam_payload_uses_original_atl24_classifications(tmp_path: Path) -
     ]
     assert payload["labels"][20] == {"source_row": 20, "label": "bathy", "label_source": "auto"}
     assert payload["labels"][-1] == {"source_row": 149, "label": "no_label", "label_source": "auto"}
+    assert payload["label_origin"] == "atl24_original"
+    assert payload["manual_output_path"] is None
+
+
+def test_full_beam_payload_uses_existing_manual_output_classifications(tmp_path: Path) -> None:
+    session = make_session(tmp_path)
+    class_ph = np.zeros(150, dtype=np.int16)
+    class_ph[0] = 40
+    class_ph[1] = 41
+    manual_path = write_manual_output(session, "Guam/ATL24_sample.h5", "gt1l", class_ph)
+
+    payload = session.read_beam("Guam/ATL24_sample.h5", "gt1l")
+
+    assert payload["label_origin"] == "manual_output"
+    assert payload["manual_output_path"] == str(manual_path)
+    assert payload["labels"][:3] == [
+        {"source_row": 0, "label": "bathy", "label_source": "auto"},
+        {"source_row": 1, "label": "surface", "label_source": "auto"},
+        {"source_row": 2, "label": "no_label", "label_source": "auto"},
+    ]
+
+
+def test_manual_output_with_mismatched_class_length_fails_clearly(tmp_path: Path) -> None:
+    session = make_session(tmp_path)
+    manual_path = write_manual_output(session, "Guam/ATL24_sample.h5", "gt1l", np.zeros(150, dtype=np.int16))
+    with h5py.File(manual_path, "r+") as h5:
+        del h5["gt1l"]["class_ph"]
+        h5["gt1l"].create_dataset("class_ph", data=np.zeros(149, dtype=np.int16))
+
+    try:
+        session.read_beam("Guam/ATL24_sample.h5", "gt1l")
+    except ValueError as exc:
+        assert "class_ph length" in str(exc)
+        assert "gt1l" in str(exc)
+    else:
+        raise AssertionError("Expected mismatched manual output class_ph length to fail")
 
 
 def test_save_creates_per_beam_manual_h5_and_rewrites_only_target_beam_classifications(tmp_path: Path) -> None:
@@ -67,6 +143,8 @@ def test_save_creates_per_beam_manual_h5_and_rewrites_only_target_beam_classific
 
     assert result["written_beams"] == ["gt1l"]
     assert len(result["outputs"]) == 1
+    assert result["source_status"]["status"] == "partial"
+    assert result["source_status"]["beam_statuses"] == {"gt1l": "complete", "gt1r": "unclassified"}
     output_path = Path(result["outputs"][0]["output_path"])
     assert result["outputs"][0]["beam"] == "gt1l"
     assert output_path.name == "ATL24_sample_gt1l_manual.h5"

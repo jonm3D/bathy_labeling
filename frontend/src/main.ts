@@ -11,6 +11,13 @@ import {
 import { createMap } from "./mapView.js";
 import { clearProfile, renderProfile, type ProfileSettings } from "./profilePlot.js";
 import {
+  labelOriginStatusText,
+  reprocessBeamStatusClass,
+  reprocessBeamStatusText,
+  reprocessFileStatusClass,
+  reprocessFileStatusText,
+} from "./reprocessStatus.js";
+import {
   configureReprocessSession,
   fetchLabels,
   fetchManifest,
@@ -294,8 +301,9 @@ function reprocessFileButton(source: ReprocessSource): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "segment-button";
+  button.classList.add(reprocessFileStatusClass(source.status));
   button.dataset.source = source.source_relative_path;
-  button.innerHTML = `<span>${source.file_name}</span><small>${source.beams.length.toLocaleString()} beams · ${source.source_relative_path}</small>`;
+  button.innerHTML = `<span>${source.file_name}</span><small>${reprocessFileStatusText(source)} · ${source.source_relative_path}</small>`;
   button.addEventListener("click", () => {
     selectedReprocessSource = source.source_relative_path;
     renderReprocessBeamList(source.source_relative_path);
@@ -311,9 +319,11 @@ function reprocessBeamButton(source: ReprocessSource, beam: string): HTMLButtonE
   const button = document.createElement("button");
   button.type = "button";
   button.className = "segment-button";
+  const status = source.beam_statuses[beam] ?? "unclassified";
+  button.classList.add(reprocessBeamStatusClass(status));
   button.dataset.source = source.source_relative_path;
   button.dataset.beam = beam;
-  button.innerHTML = `<span>${beam}</span><small>${source.file_name}</small>`;
+  button.innerHTML = `<span>${beam}</span><small>${reprocessBeamStatusText(status)} · ${source.file_name}</small>`;
   button.addEventListener("click", () => {
     void selectReprocessBeam(source.source_relative_path, beam);
   });
@@ -335,12 +345,12 @@ async function selectReprocessBeam(source: string, beam: string): Promise<void> 
   currentDemSample = null;
   currentDemKey = null;
   mapView.setSegment(currentPayload);
-  activeSegment.textContent = `${payload.beam.file_name} ${beam} · full track`;
+  activeSegment.textContent = `${payload.beam.file_name} ${beam} · full track · ${labelOriginShortText(payload.label_origin)}`;
   updateReprocessSelectionButtons();
   updateShowDemButton();
   const demStatus = settings.showDem ? await loadDemForCurrentBeam() : null;
   await rerender();
-  setStatus(demStatus ?? `${payload.beam.photon_count.toLocaleString()} photons`);
+  setStatus(demStatus ?? `${labelOriginStatusText(payload.label_origin)} · ${payload.beam.photon_count.toLocaleString()} photons`);
 }
 
 function segmentPayloadFromBeam(payload: ReprocessBeamPayload): SegmentPayload {
@@ -389,7 +399,16 @@ async function saveCurrentReprocessSource(): Promise<void> {
   cacheCurrentReprocessLabels();
   setStatus("Saving H5");
   const saved = await saveReprocessSource(currentSource, beamLabelsForSource(currentSource));
+  applyReprocessSourceStatus(saved.source_status);
   setStatus(reprocessSaveStatusText(saved));
+}
+
+function applyReprocessSourceStatus(source: ReprocessSource): void {
+  reprocessSources = reprocessSources.map((candidate) =>
+    candidate.source_relative_path === source.source_relative_path ? source : candidate,
+  );
+  selectedReprocessSource = source.source_relative_path;
+  renderReprocessSourceList();
 }
 
 function cacheCurrentReprocessLabels(): void {
@@ -688,6 +707,10 @@ function formatLabel(label: FinalLabel): string {
 
 function formatKm(meters: number): string {
   return (meters / 1000).toFixed(1);
+}
+
+function labelOriginShortText(origin: ReprocessBeamPayload["label_origin"]): string {
+  return origin === "manual_output" ? "manual output" : "original ATL24";
 }
 
 function setStatus(message: string): void {

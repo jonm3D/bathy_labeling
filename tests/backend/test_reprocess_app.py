@@ -56,12 +56,16 @@ def test_reprocess_session_endpoints_configure_load_propose_reset_and_save(tmp_p
     source = sources.json()["sources"][0]
     assert source["source_relative_path"] == "ATL24_sample.h5"
     assert source["beams"] == ["gt1l", "gt1r"]
+    assert source["status"] == "unclassified"
+    assert source["beam_statuses"] == {"gt1l": "unclassified", "gt1r": "unclassified"}
 
     beam = client.get("/reprocess/beam", params={"source": "ATL24_sample.h5", "beam": "gt1l"})
     assert beam.status_code == 200
     beam_payload = beam.json()
     assert beam_payload["beam"]["photon_count"] == 150
     assert beam_payload["labels"][0]["label"] == "surface"
+    assert beam_payload["label_origin"] == "atl24_original"
+    assert beam_payload["manual_output_path"] is None
 
     proposal = client.post(
         "/reprocess/proposal",
@@ -96,6 +100,8 @@ def test_reprocess_session_endpoints_configure_load_propose_reset_and_save(tmp_p
     assert save.status_code == 200
     assert save.json()["written_beams"] == ["gt1l"]
     assert Path(save.json()["outputs"][0]["output_path"]).name == "ATL24_sample_gt1l_manual.h5"
+    assert save.json()["source_status"]["status"] == "partial"
+    assert save.json()["source_status"]["beam_statuses"] == {"gt1l": "complete", "gt1r": "unclassified"}
 
 
 def test_reprocess_dem_sample_endpoint_returns_reference_profile(tmp_path: Path) -> None:

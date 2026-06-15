@@ -1,6 +1,9 @@
 export type FinalLabel = "surface" | "bathy" | "no_label" | "land" | "noise" | "ambiguous";
 export type LabelSource = "manual" | "auto";
 export type SegmentStatus = "unlabeled" | "draft" | "complete" | "stale" | "conflict";
+export type ReprocessBeamStatus = "complete" | "unclassified";
+export type ReprocessFileStatus = ReprocessBeamStatus | "partial";
+export type ReprocessLabelOrigin = "manual_output" | "atl24_original";
 
 export interface LabelRow {
   source_row: number;
@@ -76,6 +79,10 @@ export interface ReprocessSource {
   file_name: string;
   source_label: string | null;
   beams: string[];
+  status: ReprocessFileStatus;
+  completed_beam_count: number;
+  beam_count: number;
+  beam_statuses: Record<string, ReprocessBeamStatus>;
 }
 
 export interface ReprocessSourceListPayload {
@@ -99,6 +106,8 @@ export interface ReprocessBeamPayload {
   beam: ReprocessBeamSummary;
   photons: PhotonTable;
   labels: LabelRow[];
+  label_origin: ReprocessLabelOrigin;
+  manual_output_path: string | null;
 }
 
 export interface DemProfilePayload {
@@ -123,4 +132,5 @@ export interface ReprocessSavePayload {
   outputs: Array<{ beam: string; output_path: string }>;
   output_paths: string[];
   written_beams: string[];
+  source_status: ReprocessSource;
 }

@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import h5py
 import numpy as np
@@ -19,6 +19,10 @@ LABEL_TO_CLASS_PH: dict[FinalLabel, int] = {
     "no_label": 0,
 }
 
+BeamOutputStatus = Literal["complete", "unclassified"]
+FileOutputStatus = Literal["complete", "partial", "unclassified"]
+LabelOrigin = Literal["manual_output", "atl24_original"]
+
 
 @dataclass(frozen=True)
 class ReprocessSource:
@@ -26,13 +30,16 @@ class ReprocessSource:
     relative_path: str
     beams: tuple[str, ...]
 
-    def to_dict(self) -> dict[str, object]:
-        return {
+    def to_dict(self, status: dict[str, object] | None = None) -> dict[str, object]:
+        payload: dict[str, object] = {
             "source_relative_path": self.relative_path,
             "file_name": self.path.name,
             "source_label": source_label_for_relative_path(self.relative_path),
             "beams": list(self.beams),
         }
+        if status is not None:
+            payload.update(status)
+        return payload
 
 
 class ReprocessSession:
@@ -72,7 +79,10 @@ class ReprocessSession:
 
     def sources_payload(self) -> dict[str, object]:
         self._require_configured()
-        sources = [source.to_dict() for source in sorted(self._sources.values(), key=lambda source: source.relative_path)]
+        sources = [
+            self._source_payload(source)
+            for source in sorted(self._sources.values(), key=lambda source: source.relative_path)
+        ]
         return {"count": len(sources), "sources": sources}
 
     def read_beam(self, source_relative_path: str, beam: str) -> dict[str, object]:
@@ -80,12 +90,15 @@ class ReprocessSession:
         with h5py.File(source.path, "r") as h5:
             group = self._beam_group(h5, source_relative_path, beam)
             photons = _read_all_photons(group)
-            labels = labels_from_atl24_classes(photons.source_row, photons.atl24_class_ph)
+            beam_payload = _beam_payload(source, beam, group, h5)
+            labels, label_origin, manual_output_path = self._labels_for_beam(source, beam, photons)
             return {
-                "source": source.to_dict(),
-                "beam": _beam_payload(source, beam, group, h5),
+                "source": self._source_payload(source),
+                "beam": beam_payload,
                 "photons": photons.to_dict(),
                 "labels": labels,
+                "label_origin": label_origin,
+                "manual_output_path": None if manual_output_path is None else str(manual_output_path),
             }
 
     def propose(self, source_relative_path: str, beam: str, seeds: list[dict[str, Any]]) -> dict[str, object]:
@@ -148,7 +161,12 @@ class ReprocessSession:
             "outputs": outputs,
             "output_paths": [output["output_path"] for output in outputs],
             "written_beams": sorted(beam_labels),
+            "source_status": self._source_payload(source),
         }
+
+    def source_status(self, source_relative_path: str) -> dict[str, object]:
+        source = self._source(source_relative_path)
+        return self._source_payload(source)
 
     def _scan_sources(self, root: Path) -> dict[str, ReprocessSource]:
         sources: dict[str, ReprocessSource] = {}
@@ -185,6 +203,47 @@ class ReprocessSession:
         relative = Path(source_relative_path)
         return self.output_dir / relative.parent / f"{relative.stem}_{beam}_manual.h5"
 
+    def _manual_output_path(self, source_relative_path: str, beam: str) -> Path | None:
+        if self.output_dir is None:
+            return None
+        relative = Path(source_relative_path)
+        return self.output_dir / relative.parent / f"{relative.stem}_{beam}_manual.h5"
+
+    def _source_payload(self, source: ReprocessSource) -> dict[str, object]:
+        return source.to_dict(self._status_for_source(source))
+
+    def _status_for_source(self, source: ReprocessSource) -> dict[str, object]:
+        beam_statuses: dict[str, BeamOutputStatus] = {}
+        for beam in source.beams:
+            output_path = self._manual_output_path(source.relative_path, beam)
+            beam_statuses[beam] = "complete" if output_path is not None and output_path.exists() else "unclassified"
+        completed = sum(status == "complete" for status in beam_statuses.values())
+        total = len(source.beams)
+        if completed == 0:
+            status: FileOutputStatus = "unclassified"
+        elif completed == total:
+            status = "complete"
+        else:
+            status = "partial"
+        return {
+            "status": status,
+            "beam_statuses": beam_statuses,
+            "beam_count": total,
+            "completed_beam_count": completed,
+        }
+
+    def _labels_for_beam(
+        self,
+        source: ReprocessSource,
+        beam: str,
+        photons: PhotonTable,
+    ) -> tuple[list[dict[str, int | str]], LabelOrigin, Path | None]:
+        manual_path = self._manual_output_path(source.relative_path, beam)
+        if manual_path is None or not manual_path.exists():
+            return labels_from_atl24_classes(photons.source_row, photons.atl24_class_ph), "atl24_original", None
+        class_ph = _read_manual_class_ph(manual_path, source.relative_path, beam, expected_count=len(photons.source_row))
+        return labels_from_atl24_classes(photons.source_row, class_ph), "manual_output", manual_path
+
     def _require_configured(self) -> None:
         if self.input_dir is None:
             raise RuntimeError("Reprocess session is not configured")
@@ -211,6 +270,30 @@ def label_from_class_ph(class_ph: int | None) -> FinalLabel:
     if class_ph == 40:
         return "bathy"
     return "no_label"
+
+
+def _read_manual_class_ph(
+    manual_path: Path,
+    source_relative_path: str,
+    beam: str,
+    expected_count: int,
+) -> list[int | None]:
+    try:
+        with h5py.File(manual_path, "r") as h5:
+            if beam not in h5:
+                raise ValueError(f"Manual output missing beam for {source_relative_path}/{beam}: {manual_path}")
+            group = h5[beam]
+            if "class_ph" not in group:
+                raise ValueError(f"Manual output missing class_ph for {source_relative_path}/{beam}: {manual_path}")
+            class_ph = np.asarray(group["class_ph"][:])
+    except OSError as exc:
+        raise ValueError(f"Manual output is unreadable for {source_relative_path}/{beam}: {manual_path}") from exc
+    if int(class_ph.shape[0]) != expected_count:
+        raise ValueError(
+            f"Manual output class_ph length mismatch for {source_relative_path}/{beam}: "
+            f"expected {expected_count}, found {int(class_ph.shape[0])}"
+        )
+    return [None if np.ma.is_masked(value) else int(value) for value in class_ph]
 
 
 def _valid_beams(path: Path) -> list[str]:

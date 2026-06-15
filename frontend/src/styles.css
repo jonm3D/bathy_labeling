@@ -297,10 +297,37 @@ input {
   border-color: #2a9d8f;
 }
 
+.segment-button.is-status-complete {
+  border-color: #a7f3d0;
+  background: #ecfdf5;
+}
+
+.segment-button.is-status-partial {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.segment-button.is-status-unclassified {
+  border-color: #fecdd3;
+  background: #fff1f2;
+}
+
 .segment-button.is-selected {
   border-color: #176f66;
   background: #edf8f6;
   box-shadow: inset 3px 0 0 #2a9d8f;
+}
+
+.segment-button.is-selected.is-status-complete {
+  background: #dff9eb;
+}
+
+.segment-button.is-selected.is-status-partial {
+  background: #fff4c7;
+}
+
+.segment-button.is-selected.is-status-unclassified {
+  background: #ffe4e8;
 }
 
 .segment-button span,
