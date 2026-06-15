@@ -3,6 +3,7 @@ import type { FinalLabel, LabelRow, SegmentPayload } from "./types.js";
 import { manualSeedRowsForPlot } from "./plotRows.js";
 import { buildProfilePlotConfig, PROFILE_DEFAULT_DRAGMODE } from "./profileControls.js";
 import { profileDataRevision } from "./profileRevision.js";
+import { plotlyClearSelectionUpdate, plotlySelectionVisibilityStyle } from "./profileSelection.js";
 
 export interface ProfileSettings {
   pointSize: number;
@@ -43,69 +44,75 @@ export async function renderProfile(
   const initialRanges = computeInitialRanges(payload);
   const fixedRanges = currentRanges ?? storedRanges ?? initialRanges;
 
+  const traces = [
+    {
+      type: "scattergl",
+      mode: "markers",
+      name: "Context",
+      ...plotlySelectionVisibilityStyle(1),
+      x: contextRows.map((row) => payload.context.x_atc_m[row.index] / 1000),
+      y: contextRows.map((row) => payload.context.ortho_h_m[row.index]),
+      customdata: contextRows.map((row) => row.sourceRow),
+      marker: {
+        color: "rgba(88, 96, 110, 0.32)",
+        size: Math.max(1, settings.pointSize - 1),
+      },
+      hovertemplate: "x %{x:.3f} km<br>h %{y:.2f} m<extra>context</extra>",
+    },
+    {
+      type: "scattergl",
+      mode: "markers",
+      name: "Assigned",
+      ...plotlySelectionVisibilityStyle(settings.pointOpacity),
+      x: assignedRows.map((row) => payload.assigned.x_atc_m[row.index] / 1000),
+      y: assignedRows.map((row) => payload.assigned.ortho_h_m[row.index]),
+      customdata: assignedRows.map((row) => row.sourceRow),
+      marker: {
+        color: assignedRows.map((row) => LABEL_COLORS[labelByRow.get(row.sourceRow)?.label ?? "no_label"]),
+        size: settings.pointSize,
+        opacity: settings.pointOpacity,
+      },
+      hovertemplate: "x %{x:.3f} km<br>h %{y:.2f} m<br>row %{customdata}<extra></extra>",
+    },
+    {
+      type: "scattergl",
+      mode: "markers",
+      name: "Selected",
+      ...plotlySelectionVisibilityStyle(0.92),
+      x: selected.map((row) => payload.assigned.x_atc_m[row.index] / 1000),
+      y: selected.map((row) => payload.assigned.ortho_h_m[row.index]),
+      customdata: selected.map((row) => row.sourceRow),
+      marker: {
+        color: "rgba(255, 255, 255, 0.95)",
+        size: settings.pointSize + 4,
+        opacity: 0.92,
+        symbol: "circle-open",
+        line: { width: 2, color: "#111827" },
+      },
+      hovertemplate: "selected row %{customdata}<extra></extra>",
+    },
+    {
+      type: "scattergl",
+      mode: "markers",
+      name: "Manual seeds",
+      ...plotlySelectionVisibilityStyle(0.95),
+      x: manualSeeds.map((row) => payload.assigned.x_atc_m[row.index] / 1000),
+      y: manualSeeds.map((row) => payload.assigned.ortho_h_m[row.index]),
+      customdata: manualSeeds.map((row) => row.sourceRow),
+      marker: {
+        color: "rgba(255, 255, 255, 0)",
+        size: settings.pointSize + 6,
+        opacity: 0.95,
+        symbol: "circle-open",
+        line: { width: 2, color: "#f97316" },
+      },
+      hovertemplate: "manual seed row %{customdata}<extra></extra>",
+    },
+  ];
+
   await Plotly.react(
     container,
-    [
-      {
-        type: "scattergl",
-        mode: "markers",
-        name: "Context",
-        x: contextRows.map((row) => payload.context.x_atc_m[row.index] / 1000),
-        y: contextRows.map((row) => payload.context.ortho_h_m[row.index]),
-        customdata: contextRows.map((row) => row.sourceRow),
-        marker: {
-          color: "rgba(88, 96, 110, 0.32)",
-          size: Math.max(1, settings.pointSize - 1),
-        },
-        hovertemplate: "x %{x:.3f} km<br>h %{y:.2f} m<extra>context</extra>",
-      },
-      {
-        type: "scattergl",
-        mode: "markers",
-        name: "Assigned",
-        x: assignedRows.map((row) => payload.assigned.x_atc_m[row.index] / 1000),
-        y: assignedRows.map((row) => payload.assigned.ortho_h_m[row.index]),
-        customdata: assignedRows.map((row) => row.sourceRow),
-        marker: {
-          color: assignedRows.map((row) => LABEL_COLORS[labelByRow.get(row.sourceRow)?.label ?? "no_label"]),
-          size: settings.pointSize,
-          opacity: settings.pointOpacity,
-        },
-        hovertemplate: "x %{x:.3f} km<br>h %{y:.2f} m<br>row %{customdata}<extra></extra>",
-      },
-      {
-        type: "scattergl",
-        mode: "markers",
-        name: "Selected",
-        x: selected.map((row) => payload.assigned.x_atc_m[row.index] / 1000),
-        y: selected.map((row) => payload.assigned.ortho_h_m[row.index]),
-        customdata: selected.map((row) => row.sourceRow),
-        marker: {
-          color: "rgba(255, 255, 255, 0.95)",
-          size: settings.pointSize + 4,
-          opacity: 0.92,
-          symbol: "circle-open",
-          line: { width: 2, color: "#111827" },
-        },
-        hovertemplate: "selected row %{customdata}<extra></extra>",
-      },
-      {
-        type: "scattergl",
-        mode: "markers",
-        name: "Manual seeds",
-        x: manualSeeds.map((row) => payload.assigned.x_atc_m[row.index] / 1000),
-        y: manualSeeds.map((row) => payload.assigned.ortho_h_m[row.index]),
-        customdata: manualSeeds.map((row) => row.sourceRow),
-        marker: {
-          color: "rgba(255, 255, 255, 0)",
-          size: settings.pointSize + 6,
-          opacity: 0.95,
-          symbol: "circle-open",
-          line: { width: 2, color: "#f97316" },
-        },
-        hovertemplate: "manual seed row %{customdata}<extra></extra>",
-      },
-    ],
+    traces,
     {
       margin: { l: 56, r: 18, t: 20, b: 42 },
       paper_bgcolor: "#f8fafc",
@@ -145,6 +152,11 @@ export async function renderProfile(
     buildProfilePlotConfig(() => {
       resetProfileRanges(container, payload.segment.segment_id, initialRanges);
     }),
+  );
+  await Plotly.restyle(
+    container,
+    plotlyClearSelectionUpdate(traces.length),
+    traces.map((_, index) => index),
   );
 
   container.dataset.segmentId = payload.segment.segment_id;
