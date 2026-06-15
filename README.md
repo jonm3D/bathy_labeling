@@ -18,9 +18,9 @@ Default ATL24 reprocessing mode:
 bathy-labeler --input /path/to/h5-folder --output /path/to/h5-folder_labeled --port 8787
 ```
 
-The default app labels whole beams/tracks and writes ATL24-like files named
-`original_name_manual.h5` into the selected output folder. Original input files
-are never modified.
+The default app labels whole beams/tracks and writes one ATL24-like file per
+saved beam, named `original_name_beam_manual.h5`, into the selected output
+folder. Original input files are never modified.
 
 Training sidecar mode:
 

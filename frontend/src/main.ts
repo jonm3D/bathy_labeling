@@ -24,6 +24,7 @@ import {
   saveLabels,
   saveReprocessSource,
 } from "./api.js";
+import { reprocessSaveStatusText } from "./saveStatus.js";
 import type {
   FinalLabel,
   LabelRow,
@@ -339,7 +340,7 @@ async function saveCurrentReprocessSource(): Promise<void> {
   cacheCurrentReprocessLabels();
   setStatus("Saving H5");
   const saved = await saveReprocessSource(currentSource, beamLabelsForSource(currentSource));
-  setStatus(`Saved ${saved.output_path}`);
+  setStatus(reprocessSaveStatusText(saved));
 }
 
 function cacheCurrentReprocessLabels(): void {

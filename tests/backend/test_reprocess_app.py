@@ -71,4 +71,5 @@ def test_reprocess_session_endpoints_configure_load_propose_reset_and_save(tmp_p
         },
     )
     assert save.status_code == 200
-    assert Path(save.json()["output_path"]).name == "ATL24_sample_manual.h5"
+    assert save.json()["written_beams"] == ["gt1l"]
+    assert Path(save.json()["outputs"][0]["output_path"]).name == "ATL24_sample_gt1l_manual.h5"

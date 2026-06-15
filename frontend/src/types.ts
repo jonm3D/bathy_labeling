@@ -103,6 +103,7 @@ export interface ReprocessBeamPayload {
 
 export interface ReprocessSavePayload {
   source: string;
-  output_path: string;
+  outputs: Array<{ beam: string; output_path: string }>;
+  output_paths: string[];
   written_beams: string[];
 }

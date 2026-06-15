@@ -110,21 +110,26 @@ class ReprocessSession:
         self._require_configured()
         if self.output_dir is None:
             raise ValueError("Output folder is required before saving")
+        if not beam_labels:
+            raise ValueError("At least one beam is required before saving")
         source = self._source(source_relative_path)
-        output_path = self._output_path(source_relative_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source.path, output_path)
-        with h5py.File(output_path, "r+") as h5:
-            for beam, labels in beam_labels.items():
+        outputs: list[dict[str, str]] = []
+        for beam in sorted(beam_labels):
+            output_path = self._output_path(source_relative_path, beam)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source.path, output_path)
+            with h5py.File(output_path, "r+") as h5:
                 group = self._beam_group(h5, source_relative_path, beam)
-                class_values = _class_values_for_group(group, labels)
+                class_values = _class_values_for_group(group, beam_labels[beam])
                 if "class_ph" in group:
                     group["class_ph"][:] = class_values
                 else:
                     group.create_dataset("class_ph", data=class_values)
+            outputs.append({"beam": beam, "output_path": str(output_path)})
         return {
             "source": source_relative_path,
-            "output_path": str(output_path),
+            "outputs": outputs,
+            "output_paths": [output["output_path"] for output in outputs],
             "written_beams": sorted(beam_labels),
         }
 
@@ -157,11 +162,11 @@ class ReprocessSession:
         _validate_beam_lengths(group)
         return group
 
-    def _output_path(self, source_relative_path: str) -> Path:
+    def _output_path(self, source_relative_path: str, beam: str) -> Path:
         if self.output_dir is None:
             raise ValueError("Output folder is required before saving")
         relative = Path(source_relative_path)
-        return self.output_dir / relative.parent / f"{relative.stem}_manual.h5"
+        return self.output_dir / relative.parent / f"{relative.stem}_{beam}_manual.h5"
 
     def _require_configured(self) -> None:
         if self.input_dir is None:

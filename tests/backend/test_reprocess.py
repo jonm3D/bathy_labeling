@@ -52,7 +52,7 @@ def test_full_beam_payload_uses_original_atl24_classifications(tmp_path: Path) -
     assert payload["labels"][-1] == {"source_row": 149, "label": "no_label", "label_source": "auto"}
 
 
-def test_save_creates_manual_h5_and_rewrites_only_target_beam_classifications(tmp_path: Path) -> None:
+def test_save_creates_per_beam_manual_h5_and_rewrites_only_target_beam_classifications(tmp_path: Path) -> None:
     session = make_session(tmp_path)
     payload = session.read_beam("Guam/ATL24_sample.h5", "gt1l")
     labels = [
@@ -65,14 +65,41 @@ def test_save_creates_manual_h5_and_rewrites_only_target_beam_classifications(tm
 
     result = session.save_source("Guam/ATL24_sample.h5", {"gt1l": labels})
 
-    output_path = Path(result["output_path"])
-    assert output_path.name == "ATL24_sample_manual.h5"
+    assert result["written_beams"] == ["gt1l"]
+    assert len(result["outputs"]) == 1
+    output_path = Path(result["outputs"][0]["output_path"])
+    assert result["outputs"][0]["beam"] == "gt1l"
+    assert output_path.name == "ATL24_sample_gt1l_manual.h5"
     assert output_path.exists()
     with h5py.File(tmp_path / "ATL24_inputs" / "Guam" / "ATL24_sample.h5", "r") as original:
         with h5py.File(output_path, "r") as manual:
             assert manual.attrs["rgt"] == original.attrs["rgt"]
             assert manual["gt1l"]["class_ph"][:5].tolist() == [40, 0, 41, 41, 41]
             assert manual["gt1r"]["class_ph"][:].tolist() == original["gt1r"]["class_ph"][:].tolist()
+
+
+def test_save_multiple_beams_creates_one_manual_h5_per_beam(tmp_path: Path) -> None:
+    session = make_session(tmp_path)
+    gt1l_payload = session.read_beam("Guam/ATL24_sample.h5", "gt1l")
+    gt1r_payload = session.read_beam("Guam/ATL24_sample.h5", "gt1r")
+    gt1l_labels = [dict(row) for row in gt1l_payload["labels"]]
+    gt1r_labels = [dict(row) for row in gt1r_payload["labels"]]
+    gt1l_labels[0] = {"source_row": 0, "label": "bathy", "label_source": "manual"}
+    gt1r_labels[0] = {"source_row": 0, "label": "no_label", "label_source": "manual"}
+
+    result = session.save_source("Guam/ATL24_sample.h5", {"gt1l": gt1l_labels, "gt1r": gt1r_labels})
+
+    outputs = {item["beam"]: Path(item["output_path"]) for item in result["outputs"]}
+    assert sorted(outputs) == ["gt1l", "gt1r"]
+    assert outputs["gt1l"].name == "ATL24_sample_gt1l_manual.h5"
+    assert outputs["gt1r"].name == "ATL24_sample_gt1r_manual.h5"
+    with h5py.File(tmp_path / "ATL24_inputs" / "Guam" / "ATL24_sample.h5", "r") as original:
+        with h5py.File(outputs["gt1l"], "r") as gt1l_manual:
+            assert gt1l_manual["gt1l"]["class_ph"][0] == 40
+            assert gt1l_manual["gt1r"]["class_ph"][:].tolist() == original["gt1r"]["class_ph"][:].tolist()
+        with h5py.File(outputs["gt1r"], "r") as gt1r_manual:
+            assert gt1r_manual["gt1l"]["class_ph"][:].tolist() == original["gt1l"]["class_ph"][:].tolist()
+            assert gt1r_manual["gt1r"]["class_ph"][0] == 0
 
 
 def test_label_to_class_mapping_matches_atl24_codes() -> None:
