@@ -31,6 +31,14 @@ def write_manual_output(session: ReprocessSession, source_relative_path: str, be
     return output_path
 
 
+def add_confidence_datasets(path: Path) -> None:
+    with h5py.File(path, "r+") as h5:
+        for beam in ("gt1l", "gt1r"):
+            count = int(h5[beam]["x_atc"].shape[0])
+            h5[beam].create_dataset("confidence", data=np.full(count, 0.25, dtype=np.float32))
+            h5[beam].create_dataset("low_confidence_flag", data=np.ones(count, dtype=np.int8))
+
+
 def test_configuring_session_scans_original_h5_files_only(tmp_path: Path) -> None:
     session = make_session(tmp_path)
 
@@ -130,6 +138,8 @@ def test_manual_output_with_mismatched_class_length_fails_clearly(tmp_path: Path
 
 def test_save_creates_per_beam_manual_h5_and_rewrites_only_target_beam_classifications(tmp_path: Path) -> None:
     session = make_session(tmp_path)
+    assert session.input_dir is not None
+    add_confidence_datasets(session.input_dir / "Guam" / "ATL24_sample.h5")
     payload = session.read_beam("Guam/ATL24_sample.h5", "gt1l")
     labels = [
         {"source_row": row["source_row"], "label": "surface", "label_source": "auto"}
@@ -154,6 +164,10 @@ def test_save_creates_per_beam_manual_h5_and_rewrites_only_target_beam_classific
             assert manual.attrs["rgt"] == original.attrs["rgt"]
             assert manual["gt1l"]["class_ph"][:5].tolist() == [40, 0, 41, 41, 41]
             assert manual["gt1r"]["class_ph"][:].tolist() == original["gt1r"]["class_ph"][:].tolist()
+            assert manual["gt1l"]["confidence"][:].tolist() == [1.0] * 150
+            assert manual["gt1l"]["low_confidence_flag"][:].tolist() == [0] * 150
+            assert manual["gt1r"]["confidence"][:].tolist() == original["gt1r"]["confidence"][:].tolist()
+            assert manual["gt1r"]["low_confidence_flag"][:].tolist() == original["gt1r"]["low_confidence_flag"][:].tolist()
 
 
 def test_save_multiple_beams_creates_one_manual_h5_per_beam(tmp_path: Path) -> None:

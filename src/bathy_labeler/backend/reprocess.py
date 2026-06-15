@@ -155,6 +155,7 @@ class ReprocessSession:
                     group["class_ph"][:] = class_values
                 else:
                     group.create_dataset("class_ph", data=class_values)
+                _set_manual_confidence_values(group)
             outputs.append({"beam": beam, "output_path": str(output_path)})
         return {
             "source": source_relative_path,
@@ -354,3 +355,21 @@ def _class_values_for_group(group: h5py.Group, labels: list[dict[str, Any]]) -> 
             raise ValueError(f"Invalid label: {label}")
         values[source_row] = LABEL_TO_CLASS_PH[label]  # type: ignore[index]
     return values.astype(np.int16)
+
+
+def _set_manual_confidence_values(group: h5py.Group) -> None:
+    _set_existing_dataset_constant(group, "confidence", 1)
+    _set_existing_dataset_constant(group, "low_confidence_flag", 0)
+
+
+def _set_existing_dataset_constant(group: h5py.Group, dataset_name: str, value: int) -> None:
+    if dataset_name not in group:
+        return
+    dataset = group[dataset_name]
+    photon_count = int(group["x_atc"].shape[0])
+    if dataset.shape and int(dataset.shape[0]) != photon_count:
+        raise ValueError(
+            f"{dataset_name} length mismatch for beam {group.name}: "
+            f"expected {photon_count}, found {int(dataset.shape[0])}"
+        )
+    dataset[...] = np.full(dataset.shape, value, dtype=dataset.dtype)
