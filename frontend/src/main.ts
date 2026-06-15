@@ -51,6 +51,7 @@ const profile = requireElement("profile");
 const mapContainer = requireElement("map");
 const classButtons = requireElement("class-buttons");
 const runProposal = requireButton("run-proposal");
+const showClassificationsButton = requireButton("show-classifications");
 const resetAtl24 = requireButton("reset-atl24");
 const saveLabelsButton = requireButton("save-labels");
 const clearSelectionButton = requireButton("clear-selection");
@@ -75,6 +76,7 @@ let selectedReprocessSource: string | null = null;
 const reprocessLabelCache = new Map<string, LabelRow[]>();
 
 configureLabelButtonsForMode("reprocess");
+updateShowClassificationsButton();
 void boot();
 
 loadSessionButton.addEventListener("click", () => {
@@ -135,6 +137,16 @@ saveLabelsButton.addEventListener("click", async () => {
 
 clearSelectionButton.addEventListener("click", () => {
   void clearCurrentSelection();
+});
+
+showClassificationsButton.addEventListener("click", () => {
+  settings = {
+    ...settings,
+    showClassifications: !settings.showClassifications,
+  };
+  updateShowClassificationsButton();
+  setStatus(settings.showClassifications ? "Classifications shown" : "Grey points");
+  void rerender();
 });
 
 for (const input of [pointSize, pointOpacity]) {
@@ -486,10 +498,15 @@ function updateSelectionControls(): void {
   clearSelectionButton.disabled = selectedRows.size === 0;
 }
 
+function updateShowClassificationsButton(): void {
+  showClassificationsButton.setAttribute("aria-pressed", String(settings.showClassifications));
+}
+
 function readSettings(): ProfileSettings {
   return {
     pointSize: Number.parseFloat(pointSize.value),
     pointOpacity: Number.parseFloat(pointOpacity.value),
+    showClassifications: showClassificationsButton.getAttribute("aria-pressed") !== "false",
   };
 }
 

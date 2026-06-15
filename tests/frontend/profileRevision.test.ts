@@ -27,3 +27,10 @@ test("profile data revision changes when selected rows change", () => {
     profileDataRevision(baseLabels, new Set([1]), { pointSize: 4, pointOpacity: 0.8 }),
   );
 });
+
+test("profile data revision changes when classification visibility changes", () => {
+  assert.notEqual(
+    profileDataRevision(baseLabels, new Set(), { pointSize: 4, pointOpacity: 0.8, showClassifications: true }),
+    profileDataRevision(baseLabels, new Set(), { pointSize: 4, pointOpacity: 0.8, showClassifications: false }),
+  );
+});

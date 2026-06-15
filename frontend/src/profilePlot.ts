@@ -1,25 +1,18 @@
 import Plotly from "plotly.js-dist-min";
-import type { FinalLabel, LabelRow, SegmentPayload } from "./types.js";
+import type { LabelRow, SegmentPayload } from "./types.js";
 import { manualSeedRowsForPlot } from "./plotRows.js";
 import { buildProfilePlotConfig, PROFILE_DEFAULT_DRAGMODE } from "./profileControls.js";
 import { profileDataRevision } from "./profileRevision.js";
 import { plotlyClearSelectionUpdate, plotlySelectionVisibilityStyle } from "./profileSelection.js";
+import { profilePointColor } from "./profileColors.js";
 
 export interface ProfileSettings {
   pointSize: number;
   pointOpacity: number;
+  showClassifications: boolean;
 }
 
 export type SelectionHandler = (rows: Set<number>) => void;
-
-const LABEL_COLORS: Record<FinalLabel, string> = {
-  surface: "#4cc9f0",
-  bathy: "#2a9d8f",
-  no_label: "#8d99ae",
-  land: "#b08968",
-  noise: "#8d99ae",
-  ambiguous: "#f4a261",
-};
 
 const RANGE_BY_CONTAINER = new WeakMap<HTMLElement, { segmentId: string; ranges: AxisRanges }>();
 
@@ -68,7 +61,9 @@ export async function renderProfile(
       y: assignedRows.map((row) => payload.assigned.ortho_h_m[row.index]),
       customdata: assignedRows.map((row) => row.sourceRow),
       marker: {
-        color: assignedRows.map((row) => LABEL_COLORS[labelByRow.get(row.sourceRow)?.label ?? "no_label"]),
+        color: assignedRows.map((row) =>
+          profilePointColor(labelByRow.get(row.sourceRow)?.label ?? "no_label", settings.showClassifications),
+        ),
         size: settings.pointSize,
         opacity: settings.pointOpacity,
       },
