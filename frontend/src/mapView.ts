@@ -1,6 +1,7 @@
-import maplibregl, { type GeoJSONSource, type LngLatBoundsLike } from "maplibre-gl";
+import maplibregl, { type GeoJSONSource } from "maplibre-gl";
 import type { Feature, LineString } from "geojson";
 import { buildEsriSatelliteStyle } from "./basemap.js";
+import { boundsForCoordinates } from "./mapTrack.js";
 import type { SegmentPayload } from "./types.js";
 
 export interface LabelerMap {
@@ -18,23 +19,36 @@ export function createMap(container: HTMLElement): LabelerMap {
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), "top-right");
 
-  let pendingPayload: SegmentPayload | null = null;
-  map.on("load", () => {
-    ensureLayers(map);
-    if (pendingPayload) {
-      renderPayload(map, pendingPayload);
-      pendingPayload = null;
+  let latestPayload: SegmentPayload | null = null;
+  let renderQueued = false;
+  let latestRenderVersion = 0;
+  let completedRenderVersion = 0;
+
+  const scheduleRender = () => {
+    if (renderQueued) {
+      return;
     }
-  });
+    renderQueued = true;
+    requestAnimationFrame(() => {
+      renderQueued = false;
+      if (!latestPayload || !map.loaded() || latestRenderVersion === completedRenderVersion) {
+        return;
+      }
+      map.resize();
+      ensureLayers(map);
+      renderPayload(map, latestPayload);
+      completedRenderVersion = latestRenderVersion;
+    });
+  };
+
+  map.on("load", scheduleRender);
+  map.on("idle", scheduleRender);
 
   return {
     setSegment(payload: SegmentPayload) {
-      if (!map.loaded()) {
-        pendingPayload = payload;
-        return;
-      }
-      ensureLayers(map);
-      renderPayload(map, payload);
+      latestPayload = payload;
+      latestRenderVersion += 1;
+      scheduleRender();
     },
     destroy() {
       map.remove();
@@ -74,30 +88,10 @@ function renderPayload(map: maplibregl.Map, payload: SegmentPayload): void {
       coordinates,
     },
   });
-  const bounds = boundsFor(coordinates);
+  const bounds = boundsForCoordinates(coordinates);
   if (bounds) {
     map.fitBounds(bounds, { padding: 36, duration: 350 });
   }
-}
-
-function boundsFor(coordinates: number[][]): LngLatBoundsLike | null {
-  if (coordinates.length === 0) {
-    return null;
-  }
-  let minLon = coordinates[0][0];
-  let maxLon = coordinates[0][0];
-  let minLat = coordinates[0][1];
-  let maxLat = coordinates[0][1];
-  for (const [lon, lat] of coordinates) {
-    minLon = Math.min(minLon, lon);
-    maxLon = Math.max(maxLon, lon);
-    minLat = Math.min(minLat, lat);
-    maxLat = Math.max(maxLat, lat);
-  }
-  return [
-    [minLon, minLat],
-    [maxLon, maxLat],
-  ];
 }
 
 function emptyLine(): Feature<LineString> {

@@ -1,6 +1,7 @@
 import Plotly from "plotly.js-dist-min";
 import type { FinalLabel, LabelRow, SegmentPayload } from "./types.js";
 import { manualSeedRowsForPlot } from "./plotRows.js";
+import { buildProfilePlotConfig } from "./profileControls.js";
 
 export interface ProfileSettings {
   pointSize: number;
@@ -38,7 +39,8 @@ export async function renderProfile(
   const storedRanges =
     sameSegment && storedRangeState?.segmentId === payload.segment.segment_id ? storedRangeState.ranges : null;
   const currentRanges = sameSegment ? readCurrentRanges(container) : null;
-  const fixedRanges = currentRanges ?? storedRanges ?? computeInitialRanges(payload);
+  const initialRanges = computeInitialRanges(payload);
+  const fixedRanges = currentRanges ?? storedRanges ?? initialRanges;
 
   await Plotly.react(
     container,
@@ -138,11 +140,9 @@ export async function renderProfile(
         },
       ],
     },
-    {
-      responsive: true,
-      displaylogo: false,
-      modeBarButtonsToRemove: ["toImage"],
-    },
+    buildProfilePlotConfig(() => {
+      resetProfileRanges(container, payload.segment.segment_id, initialRanges);
+    }),
   );
 
   container.dataset.segmentId = payload.segment.segment_id;
@@ -153,6 +153,16 @@ export async function renderProfile(
 
 export function clearProfile(container: HTMLElement): void {
   Plotly.purge(container);
+}
+
+function resetProfileRanges(container: HTMLElement, segmentId: string, ranges: AxisRanges): void {
+  RANGE_BY_CONTAINER.set(container, { segmentId, ranges });
+  void Plotly.relayout(container, {
+    "xaxis.autorange": false,
+    "xaxis.range": ranges.x,
+    "yaxis.autorange": false,
+    "yaxis.range": ranges.y,
+  });
 }
 
 function attachSelectionHandlers(container: HTMLElement, onSelect: SelectionHandler): void {
