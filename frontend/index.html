@@ -7,7 +7,7 @@
   </head>
   <body>
     <div id="app">
-      <section class="top-row">
+      <section class="left-column">
         <section class="control-column">
           <header class="app-title">
             <h1>ATL24 Smart Labeler</h1>
@@ -64,12 +64,17 @@
             <div id="beam-list" class="segment-list"></div>
           </section>
         </section>
+      </section>
+      <section class="workspace-column">
         <section class="map-column">
           <div id="map" class="map-panel"></div>
         </section>
-      </section>
-      <section class="profile-row">
-        <div id="profile" class="profile-panel"></div>
+        <section class="profile-row">
+          <div id="profile" class="profile-panel"></div>
+          <button type="button" id="sync-with-map" class="profile-sync-button" aria-pressed="false" disabled>
+            Sync with Map
+          </button>
+        </section>
       </section>
     </div>
     <script type="module" src="/src/main.ts"></script>

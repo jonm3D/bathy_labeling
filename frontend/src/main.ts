@@ -8,8 +8,20 @@ import {
   labelsForAppMode,
   toggleLabelMode,
 } from "./labelState.js";
-import { createMap } from "./mapView.js";
-import { clearProfile, renderProfile, type ProfileSettings } from "./profilePlot.js";
+import {
+  computeMapSyncView,
+  extractPlotlyXRange,
+  getSegmentDistanceRange,
+  type DistanceRange,
+} from "./mapSync.js";
+import { createMap, type MapCameraState } from "./mapView.js";
+import {
+  clearProfile,
+  getProfileXRange,
+  renderProfile,
+  setProfileXRange,
+  type ProfileSettings,
+} from "./profilePlot.js";
 import {
   labelOriginStatusText,
   reprocessBeamStatusClass,
@@ -33,6 +45,7 @@ import {
   saveReprocessSource,
 } from "./api.js";
 import { reprocessSaveStatusText } from "./saveStatus.js";
+import { createPayloadSwitchGuard } from "./syncState.js";
 import type {
   DemSamplePayload,
   FinalLabel,
@@ -68,11 +81,13 @@ const showDemButton = requireButton("show-dem");
 const resetAtl24 = requireButton("reset-atl24");
 const saveLabelsButton = requireButton("save-labels");
 const clearSelectionButton = requireButton("clear-selection");
+const syncWithMapButton = requireButton("sync-with-map");
 const pointSize = requireInput("point-size");
 const pointOpacity = requireInput("point-opacity");
 let classModeButtons: HTMLButtonElement[] = [];
 
 const mapView = createMap(mapContainer);
+const payloadSwitchGuard = createPayloadSwitchGuard();
 
 let appMode: AppMode = "reprocess";
 let segments: SegmentSummary[] = [];
@@ -88,11 +103,18 @@ let currentSegmentId: string | null = null;
 let currentSource: string | null = null;
 let currentBeam: string | null = null;
 let selectedReprocessSource: string | null = null;
+let fullProfileRange: DistanceRange | null = null;
+let currentProfileRange: DistanceRange | null = null;
+let restoreCameraState: MapCameraState | null = null;
+let removeMapCameraListener: (() => void) | null = null;
+let ignoreNextMapCameraChange = false;
+let ignoreProfileRelayout = false;
 const reprocessLabelCache = new Map<string, LabelRow[]>();
 
 configureLabelButtonsForMode("reprocess");
 updateShowClassificationsButton();
 updateShowDemButton();
+updateSyncWithMapButton();
 void boot();
 
 loadSessionButton.addEventListener("click", () => {
@@ -153,6 +175,18 @@ saveLabelsButton.addEventListener("click", async () => {
 
 clearSelectionButton.addEventListener("click", () => {
   void clearCurrentSelection();
+});
+
+syncWithMapButton.addEventListener("click", () => {
+  const enabled = !isMapSyncEnabled();
+  setMapSyncEnabled(enabled);
+  if (enabled) {
+    enableMapSync();
+    setStatus(currentPayload ? "Map sync on" : "Map sync ready");
+  } else {
+    disableMapSync();
+    setStatus("Map sync off");
+  }
 });
 
 showClassificationsButton.addEventListener("click", () => {
@@ -253,6 +287,7 @@ async function configureAndLoadReprocessSession(): Promise<void> {
   await configureReprocessSession(inputValue, outputDir.value.trim());
   reprocessLabelCache.clear();
   currentPayload = null;
+  setActiveProfileRange(null);
   currentLabels = [];
   selectedRows = new Set();
   currentDemSample = null;
@@ -274,6 +309,7 @@ async function loadReprocessSources(): Promise<void> {
     await selectReprocessBeam(first.source_relative_path, first.beams[0]);
   } else {
     clearProfile(profile);
+    setActiveProfileRange(null);
     updateSelectionControls();
     updateShowDemButton();
     activeSegment.textContent = "No beam selected";
@@ -331,26 +367,42 @@ function reprocessBeamButton(source: ReprocessSource, beam: string): HTMLButtonE
 }
 
 async function selectReprocessBeam(source: string, beam: string): Promise<void> {
+  const switchToken = beginPayloadSwitch();
   setStatus("Loading beam");
-  selectedReprocessSource = source;
-  renderReprocessBeamList(source);
-  updateReprocessSelectionButtons();
-  const payload = await fetchReprocessBeam(source, beam);
-  currentSource = source;
-  currentBeam = beam;
-  currentSegmentId = null;
-  currentPayload = segmentPayloadFromBeam(payload);
-  currentLabels = cloneLabels(reprocessLabelCache.get(cacheKey(source, beam)) ?? payload.labels);
-  selectedRows = new Set();
-  currentDemSample = null;
-  currentDemKey = null;
-  mapView.setSegment(currentPayload);
-  activeSegment.textContent = `${payload.beam.file_name} ${beam} · full track · ${labelOriginShortText(payload.label_origin)}`;
-  updateReprocessSelectionButtons();
-  updateShowDemButton();
-  const demStatus = settings.showDem ? await loadDemForCurrentBeam() : null;
-  await rerender();
-  setStatus(demStatus ?? `${labelOriginStatusText(payload.label_origin)} · ${payload.beam.photon_count.toLocaleString()} photons`);
+  try {
+    selectedReprocessSource = source;
+    renderReprocessBeamList(source);
+    updateReprocessSelectionButtons();
+    const payload = await fetchReprocessBeam(source, beam);
+    if (!payloadSwitchGuard.isCurrent(switchToken)) {
+      return;
+    }
+    currentSource = source;
+    currentBeam = beam;
+    currentSegmentId = null;
+    currentPayload = segmentPayloadFromBeam(payload);
+    setActiveProfileRange(currentPayload);
+    currentLabels = cloneLabels(reprocessLabelCache.get(cacheKey(source, beam)) ?? payload.labels);
+    selectedRows = new Set();
+    currentDemSample = null;
+    currentDemKey = null;
+    mapView.setSegment(currentPayload, { fit: !isMapSyncEnabled() });
+    activeSegment.textContent = `${payload.beam.file_name} ${beam} · full track · ${labelOriginShortText(payload.label_origin)}`;
+    updateReprocessSelectionButtons();
+    updateShowDemButton();
+    const demStatus = settings.showDem ? await loadDemForCurrentBeam() : null;
+    if (!payloadSwitchGuard.isCurrent(switchToken)) {
+      return;
+    }
+    await rerender();
+    if (!payloadSwitchGuard.isCurrent(switchToken)) {
+      return;
+    }
+    syncMapToProfile(true);
+    setStatus(demStatus ?? `${labelOriginStatusText(payload.label_origin)} · ${payload.beam.photon_count.toLocaleString()} photons`);
+  } finally {
+    finishPayloadSwitch(switchToken);
+  }
 }
 
 function segmentPayloadFromBeam(payload: ReprocessBeamPayload): SegmentPayload {
@@ -455,6 +507,7 @@ async function loadSegments(selectSegmentId?: string): Promise<void> {
     await selectSegment(nextSegmentId);
   } else {
     clearProfile(profile);
+    setActiveProfileRange(null);
     updateSelectionControls();
     activeSegment.textContent = "No segment selected";
   }
@@ -482,22 +535,36 @@ function segmentButton(segment: SegmentSummary): HTMLButtonElement {
 }
 
 async function selectSegment(segmentId: string): Promise<void> {
+  const switchToken = beginPayloadSwitch();
   setStatus("Loading segment");
-  currentPayload = await fetchSegment(segmentId);
-  const labels = await fetchLabels(segmentId);
-  currentLabels =
-    labels.status === "complete"
-      ? labels.rows
-      : createDefaultLabels(currentPayload.assigned.source_row, "noise");
-  currentSegmentId = segmentId;
-  currentSource = null;
-  currentBeam = null;
-  selectedRows = new Set();
-  activeSegment.textContent = `${currentPayload.segment.file_name} ${currentPayload.segment.beam} · ${formatKm(currentPayload.segment.x_atc_start_m)}-${formatKm(currentPayload.segment.x_atc_end_m)} km`;
-  mapView.setSegment(currentPayload);
-  updateSegmentSelectionButtons();
-  await rerender();
-  setStatus(`${currentPayload.assigned.source_row.length.toLocaleString()} assigned photons`);
+  try {
+    const payload = await fetchSegment(segmentId);
+    const labels = await fetchLabels(segmentId);
+    if (!payloadSwitchGuard.isCurrent(switchToken)) {
+      return;
+    }
+    currentPayload = payload;
+    setActiveProfileRange(currentPayload);
+    currentLabels =
+      labels.status === "complete"
+        ? labels.rows
+        : createDefaultLabels(currentPayload.assigned.source_row, "noise");
+    currentSegmentId = segmentId;
+    currentSource = null;
+    currentBeam = null;
+    selectedRows = new Set();
+    activeSegment.textContent = `${currentPayload.segment.file_name} ${currentPayload.segment.beam} · ${formatKm(currentPayload.segment.x_atc_start_m)}-${formatKm(currentPayload.segment.x_atc_end_m)} km`;
+    mapView.setSegment(currentPayload, { fit: !isMapSyncEnabled() });
+    updateSegmentSelectionButtons();
+    await rerender();
+    if (!payloadSwitchGuard.isCurrent(switchToken)) {
+      return;
+    }
+    syncMapToProfile(true);
+    setStatus(`${currentPayload.assigned.source_row.length.toLocaleString()} assigned photons`);
+  } finally {
+    finishPayloadSwitch(switchToken);
+  }
 }
 
 async function runTrainingProposal(): Promise<void> {
@@ -532,7 +599,8 @@ async function rerender(): Promise<void> {
   }
   await renderProfile(profile, currentPayload, currentLabels, selectedRows, settings, activeDemSample(), (rows) => {
     void handleProfileSelection(rows);
-  });
+  }, handleProfileRelayout);
+  currentProfileRange = getProfileXRange(profile) ?? currentProfileRange ?? fullProfileRange;
 }
 
 async function loadDemAndRerender(): Promise<void> {
@@ -604,6 +672,138 @@ async function clearCurrentSelection(): Promise<void> {
   selectedRows = new Set();
   setStatus("Selection cleared");
   await rerender();
+}
+
+function setActiveProfileRange(payload: SegmentPayload | null): void {
+  fullProfileRange = payload ? getSegmentDistanceRange(payload) : null;
+  currentProfileRange = fullProfileRange;
+}
+
+function beginPayloadSwitch(): number {
+  const token = payloadSwitchGuard.begin();
+  ignoreProfileRelayout = true;
+  ignoreNextMapCameraChange = true;
+  return token;
+}
+
+function finishPayloadSwitch(token: number): void {
+  if (!payloadSwitchGuard.isCurrent(token)) {
+    return;
+  }
+  payloadSwitchGuard.finish(token);
+  window.setTimeout(() => {
+    if (!payloadSwitchGuard.isSwitching()) {
+      ignoreProfileRelayout = false;
+    }
+  }, 0);
+}
+
+function syncMapToProfile(animated: boolean): void {
+  if (!isMapSyncEnabled() || !currentPayload) {
+    return;
+  }
+
+  const syncView = computeMapSyncView(currentPayload, currentProfileRange ?? fullProfileRange);
+  if (!syncView) {
+    return;
+  }
+
+  currentProfileRange = syncView.rangeKm;
+  ignoreNextMapCameraChange = true;
+  mapView.syncToSegmentRange(syncView, animated);
+  window.setTimeout(
+    () => {
+      ignoreNextMapCameraChange = false;
+    },
+    animated ? 900 : 0,
+  );
+}
+
+function handleProfileRelayout(update: Record<string, unknown>): void {
+  if (payloadSwitchGuard.isSwitching() || ignoreProfileRelayout) {
+    return;
+  }
+  const nextRange = extractPlotlyXRange(update, fullProfileRange);
+  if (nextRange === null) {
+    return;
+  }
+  currentProfileRange = nextRange;
+  syncMapToProfile(false);
+}
+
+async function syncProfileToMapView(): Promise<void> {
+  if (!isMapSyncEnabled() || !currentPayload) {
+    return;
+  }
+
+  if (payloadSwitchGuard.isSwitching()) {
+    return;
+  }
+
+  if (ignoreNextMapCameraChange) {
+    ignoreNextMapCameraChange = false;
+    return;
+  }
+
+  const nextRange = mapView.getVisibleSegmentRange(currentPayload);
+  if (nextRange === null || rangesAreClose(nextRange, currentProfileRange)) {
+    return;
+  }
+
+  currentProfileRange = nextRange;
+  ignoreProfileRelayout = true;
+  try {
+    await setProfileXRange(profile, nextRange);
+  } finally {
+    window.setTimeout(() => {
+      ignoreProfileRelayout = false;
+    }, 0);
+  }
+}
+
+function rangesAreClose(left: DistanceRange, right: DistanceRange | null): boolean {
+  if (right === null) {
+    return false;
+  }
+  return Math.abs(left[0] - right[0]) < 0.001 && Math.abs(left[1] - right[1]) < 0.001;
+}
+
+function enableMapSync(): void {
+  if (restoreCameraState === null) {
+    restoreCameraState = mapView.getCameraState();
+  }
+  if (removeMapCameraListener === null) {
+    removeMapCameraListener = mapView.onCameraChange(() => {
+      void syncProfileToMapView();
+    });
+  }
+  syncMapToProfile(true);
+}
+
+function disableMapSync(): void {
+  removeMapCameraListener?.();
+  removeMapCameraListener = null;
+  ignoreNextMapCameraChange = false;
+  ignoreProfileRelayout = false;
+
+  if (restoreCameraState !== null) {
+    mapView.restoreCameraState(restoreCameraState, true);
+    restoreCameraState = null;
+  }
+}
+
+function isMapSyncEnabled(): boolean {
+  return syncWithMapButton.getAttribute("aria-pressed") === "true";
+}
+
+function setMapSyncEnabled(enabled: boolean): void {
+  syncWithMapButton.setAttribute("aria-pressed", String(enabled));
+  syncWithMapButton.classList.toggle("is-active", enabled);
+}
+
+function updateSyncWithMapButton(): void {
+  syncWithMapButton.disabled = false;
+  setMapSyncEnabled(isMapSyncEnabled());
 }
 
 function updateSelectionControls(): void {

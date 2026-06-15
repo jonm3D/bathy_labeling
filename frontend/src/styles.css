@@ -28,19 +28,32 @@ input {
 
 #app {
   display: grid;
-  grid-template-rows: minmax(420px, 50vh) minmax(0, 1fr);
+  grid-template-columns: minmax(320px, 25vw) minmax(0, 1fr);
   height: 100vh;
   min-height: 0;
   min-width: 1120px;
   overflow: hidden;
 }
 
-.top-row {
+.left-column,
+.workspace-column {
   display: grid;
-  grid-template-columns: minmax(340px, 380px) minmax(390px, 430px) minmax(360px, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.left-column {
+  grid-template-rows: auto minmax(0, 1fr);
+  border-right: 1px solid #cbd5e1;
+  background: #f8fafc;
+}
+
+.workspace-column {
+  grid-template-rows: minmax(300px, 48vh) minmax(0, 1fr);
+}
+
+.map-column {
   border-bottom: 1px solid #cbd5e1;
 }
 
@@ -57,7 +70,7 @@ input {
   display: grid;
   align-content: start;
   grid-template-rows: auto auto auto auto;
-  border-right: 1px solid #cbd5e1;
+  border-bottom: 1px solid #cbd5e1;
   background: #fbfcfe;
 }
 
@@ -244,8 +257,7 @@ input {
 
 .picker-column {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(120px, 0.8fr);
-  border-right: 1px solid #cbd5e1;
+  grid-template-columns: minmax(0, 1.15fr) minmax(92px, 0.85fr);
   background: #f8fafc;
 }
 
@@ -359,6 +371,51 @@ input {
 
 .profile-panel {
   background: #ffffff;
+}
+
+.profile-row {
+  position: relative;
+}
+
+.profile-sync-button {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  z-index: 5;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(15, 23, 42, 0.18);
+  border-radius: 6px;
+  background: rgba(248, 250, 252, 0.94);
+  color: #172033;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.14);
+  cursor: pointer;
+}
+
+.profile-sync-button:hover {
+  border-color: #2a9d8f;
+  background: #edf8f6;
+}
+
+.profile-sync-button[aria-pressed="true"],
+.profile-sync-button.is-active {
+  border-color: #176f66;
+  background: #2a9d8f;
+  color: #ffffff;
+}
+
+.profile-sync-button[aria-pressed="true"]:hover,
+.profile-sync-button.is-active:hover {
+  border-color: #0f5f57;
+  background: #23867a;
+}
+
+.profile-sync-button:disabled,
+.profile-sync-button:disabled:hover {
+  border-color: #d9e2ee;
+  background: rgba(241, 245, 249, 0.9);
+  color: #94a3b8;
+  cursor: not-allowed;
 }
 
 .map-panel {

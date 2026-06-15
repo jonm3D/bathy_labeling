@@ -15,8 +15,10 @@ export interface ProfileSettings {
 }
 
 export type SelectionHandler = (rows: Set<number>) => void;
+export type ProfileRelayoutHandler = (update: Record<string, unknown>) => void;
 
 const RANGE_BY_CONTAINER = new WeakMap<HTMLElement, { segmentId: string; ranges: AxisRanges }>();
+const RELAYOUT_EVENTS = ["plotly_relayout", "plotly_relayouting"] as const;
 
 export async function renderProfile(
   container: HTMLElement,
@@ -26,6 +28,7 @@ export async function renderProfile(
   settings: ProfileSettings,
   demSample: DemSamplePayload | null,
   onSelect: SelectionHandler,
+  onRelayout?: ProfileRelayoutHandler,
 ): Promise<void> {
   const labelByRow = new Map(labels.map((row) => [row.source_row, row]));
   const contextRows = payload.context.source_row.map((sourceRow, index) => ({ sourceRow, index }));
@@ -185,12 +188,20 @@ export async function renderProfile(
 
   container.dataset.segmentId = payload.segment.segment_id;
   RANGE_BY_CONTAINER.set(container, { segmentId: payload.segment.segment_id, ranges: fixedRanges });
-  attachRangeHandler(container, payload.segment.segment_id, fixedRanges);
+  attachRangeHandler(container, payload.segment.segment_id, fixedRanges, onRelayout);
   attachSelectionHandlers(container, onSelect);
 }
 
 export function clearProfile(container: HTMLElement): void {
   Plotly.purge(container);
+}
+
+export async function setProfileXRange(container: HTMLElement, range: [number, number]): Promise<void> {
+  await Plotly.relayout(container, { "xaxis.range": range });
+}
+
+export function getProfileXRange(container: HTMLElement): [number, number] | null {
+  return readCurrentRanges(container)?.x ?? null;
 }
 
 function resetProfileRanges(container: HTMLElement, segmentId: string, ranges: AxisRanges): void {
@@ -219,20 +230,31 @@ function attachSelectionHandlers(container: HTMLElement, onSelect: SelectionHand
   });
 }
 
-function attachRangeHandler(container: HTMLElement, segmentId: string, fallbackRanges: AxisRanges): void {
+function attachRangeHandler(
+  container: HTMLElement,
+  segmentId: string,
+  fallbackRanges: AxisRanges,
+  onRelayout?: ProfileRelayoutHandler,
+): void {
   const plot = container as HTMLElement & {
     removeAllListeners?: (eventName: string) => void;
     on?: (eventName: string, handler: (event: PlotRelayoutEvent) => void) => void;
   };
-  plot.removeAllListeners?.("plotly_relayout");
-  plot.on?.("plotly_relayout", (event) => {
+  for (const eventName of RELAYOUT_EVENTS) {
+    plot.removeAllListeners?.(eventName);
+  }
+  const handleRelayout = (event: PlotRelayoutEvent) => {
     const stored = RANGE_BY_CONTAINER.get(container);
     const base = stored?.segmentId === segmentId ? stored.ranges : fallbackRanges;
     const ranges = rangesFromRelayout(event, base);
     if (ranges) {
       RANGE_BY_CONTAINER.set(container, { segmentId, ranges });
     }
-  });
+    onRelayout?.(event);
+  };
+  for (const eventName of RELAYOUT_EVENTS) {
+    plot.on?.(eventName, handleRelayout);
+  }
 }
 
 interface PlotSelectionEvent {
