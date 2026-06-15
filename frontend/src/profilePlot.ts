@@ -1,7 +1,8 @@
 import Plotly from "plotly.js-dist-min";
 import type { FinalLabel, LabelRow, SegmentPayload } from "./types.js";
 import { manualSeedRowsForPlot } from "./plotRows.js";
-import { buildProfilePlotConfig } from "./profileControls.js";
+import { buildProfilePlotConfig, PROFILE_DEFAULT_DRAGMODE } from "./profileControls.js";
+import { profileDataRevision } from "./profileRevision.js";
 
 export interface ProfileSettings {
   pointSize: number;
@@ -110,7 +111,7 @@ export async function renderProfile(
       paper_bgcolor: "#f8fafc",
       plot_bgcolor: "#ffffff",
       font: { color: "#172033" },
-      dragmode: "lasso",
+      dragmode: PROFILE_DEFAULT_DRAGMODE,
       showlegend: false,
       xaxis: {
         title: { text: "x_atc (km)" },
@@ -125,6 +126,7 @@ export async function renderProfile(
         zerolinecolor: "rgba(15, 23, 42, 0.18)",
       },
       uirevision: payload.segment.segment_id,
+      datarevision: profileDataRevision(labels, selectedRows, settings),
       shapes: [
         {
           type: "rect",

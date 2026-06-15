@@ -19,6 +19,8 @@ export interface ProfilePlotConfig extends Record<string, unknown> {
   modeBarButtonsToAdd: ProfileModeBarButton[];
 }
 
+export const PROFILE_DEFAULT_DRAGMODE = "zoom";
+
 const HOME_ICON = {
   width: 512,
   height: 512,

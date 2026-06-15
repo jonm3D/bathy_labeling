@@ -152,7 +152,7 @@ input {
 }
 
 .actions {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .actions #run-proposal {
@@ -178,6 +178,14 @@ input {
 .toolbar button.is-active:hover {
   border-color: #0f5f57;
   background: #23867a;
+}
+
+.toolbar button:disabled,
+.toolbar button:disabled:hover {
+  border-color: #d9e2ee;
+  background: #f1f5f9;
+  color: #94a3b8;
+  cursor: not-allowed;
 }
 
 .slider-grid {

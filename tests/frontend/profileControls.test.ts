@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildProfilePlotConfig } from "../../frontend/src/profileControls.js";
+import { buildProfilePlotConfig, PROFILE_DEFAULT_DRAGMODE } from "../../frontend/src/profileControls.js";
 
 test("profile plot config enables scroll zoom and uses custom home reset", () => {
   let clicked = false;
@@ -10,6 +10,7 @@ test("profile plot config enables scroll zoom and uses custom home reset", () =>
   });
 
   assert.equal(config.scrollZoom, true);
+  assert.equal(PROFILE_DEFAULT_DRAGMODE, "zoom");
   assert.equal(config.displaylogo, false);
   assert.equal(config.responsive, true);
   assert.ok(config.modeBarButtonsToRemove.includes("toImage"));

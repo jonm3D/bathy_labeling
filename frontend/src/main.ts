@@ -53,6 +53,7 @@ const classButtons = requireElement("class-buttons");
 const runProposal = requireButton("run-proposal");
 const resetAtl24 = requireButton("reset-atl24");
 const saveLabelsButton = requireButton("save-labels");
+const clearSelectionButton = requireButton("clear-selection");
 const pointSize = requireInput("point-size");
 const pointOpacity = requireInput("point-opacity");
 let classModeButtons: HTMLButtonElement[] = [];
@@ -91,6 +92,10 @@ classButtons.addEventListener("click", (event) => {
   }
   activeLabel = toggleLabelMode(activeLabel, label);
   updateClassModeButtons();
+  if (activeLabel && selectedRows.size > 0) {
+    void applyLabelToSelectedRows(activeLabel);
+    return;
+  }
   setStatus(activeLabel ? `${formatLabel(activeLabel)} mode` : "Label mode off");
 });
 
@@ -126,6 +131,10 @@ saveLabelsButton.addEventListener("click", async () => {
   } else {
     await saveCurrentTrainingSegment();
   }
+});
+
+clearSelectionButton.addEventListener("click", () => {
+  void clearCurrentSelection();
 });
 
 for (const input of [pointSize, pointOpacity]) {
@@ -185,6 +194,7 @@ async function configureAndLoadReprocessSession(): Promise<void> {
   currentPayload = null;
   currentLabels = [];
   selectedRows = new Set();
+  updateSelectionControls();
   selectedReprocessSource = null;
   await loadReprocessSources();
 }
@@ -200,6 +210,7 @@ async function loadReprocessSources(): Promise<void> {
     await selectReprocessBeam(first.source_relative_path, first.beams[0]);
   } else {
     clearProfile(profile);
+    updateSelectionControls();
     activeSegment.textContent = "No beam selected";
     setStatus("No ATL24 beams found");
   }
@@ -359,6 +370,7 @@ async function loadSegments(selectSegmentId?: string): Promise<void> {
     await selectSegment(nextSegmentId);
   } else {
     clearProfile(profile);
+    updateSelectionControls();
     activeSegment.textContent = "No segment selected";
   }
   setStatus("");
@@ -428,6 +440,7 @@ async function saveCurrentTrainingSegment(): Promise<void> {
 }
 
 async function rerender(): Promise<void> {
+  updateSelectionControls();
   if (!currentPayload) {
     return;
   }
@@ -439,13 +452,38 @@ async function rerender(): Promise<void> {
 async function handleProfileSelection(rows: Set<number>): Promise<void> {
   selectedRows = rows;
   if (activeLabel && rows.size > 0) {
-    currentLabels = labelSelectionWithMode(currentLabels, rows, activeLabel);
-    if (appMode === "reprocess") {
-      cacheCurrentReprocessLabels();
-    }
-    setStatus(`Set ${rows.size.toLocaleString()} ${formatLabel(activeLabel).toLowerCase()} photons`);
+    await applyLabelToSelectedRows(activeLabel);
+    return;
   }
+  setStatus(rows.size > 0 ? `${rows.size.toLocaleString()} photons selected` : "Selection cleared");
   await rerender();
+}
+
+async function applyLabelToSelectedRows(label: FinalLabel): Promise<void> {
+  if (selectedRows.size === 0) {
+    return;
+  }
+  const selectedCount = selectedRows.size;
+  currentLabels = labelSelectionWithMode(currentLabels, selectedRows, label);
+  if (appMode === "reprocess") {
+    cacheCurrentReprocessLabels();
+  }
+  selectedRows = new Set();
+  setStatus(`Set ${selectedCount.toLocaleString()} ${formatLabel(label).toLowerCase()} photons`);
+  await rerender();
+}
+
+async function clearCurrentSelection(): Promise<void> {
+  if (selectedRows.size === 0) {
+    return;
+  }
+  selectedRows = new Set();
+  setStatus("Selection cleared");
+  await rerender();
+}
+
+function updateSelectionControls(): void {
+  clearSelectionButton.disabled = selectedRows.size === 0;
 }
 
 function readSettings(): ProfileSettings {
