@@ -4,6 +4,7 @@ import type {
   ManifestPayload,
   ProposalPayload,
   ReprocessBeamPayload,
+  ReprocessDirectorySelectionPayload,
   ReprocessSavePayload,
   ReprocessSourceListPayload,
   SegmentListPayload,
@@ -34,6 +35,10 @@ export function buildProposalUrl(segmentId: string): string {
 export function buildReprocessBeamUrl(source: string, beam: string): string {
   const params = new URLSearchParams({ source, beam });
   return `/reprocess/beam?${params.toString()}`;
+}
+
+export function buildReprocessSelectDirectoryUrl(): string {
+  return "/reprocess/select-directory";
 }
 
 export function fetchManifest(): Promise<ManifestPayload> {
@@ -73,6 +78,17 @@ export function configureReprocessSession(inputDir: string, outputDir: string): 
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ input_dir: inputDir, output_dir: outputDir }),
+  });
+}
+
+export function selectReprocessDirectory(
+  title: string,
+  initialDir?: string,
+): Promise<ReprocessDirectorySelectionPayload> {
+  return fetchJson<ReprocessDirectorySelectionPayload>(buildReprocessSelectDirectoryUrl(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, initial_dir: initialDir || null }),
   });
 }
 

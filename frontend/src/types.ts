@@ -106,3 +106,7 @@ export interface ReprocessSavePayload {
   output_path: string;
   written_beams: string[];
 }
+
+export interface ReprocessDirectorySelectionPayload {
+  path: string | null;
+}

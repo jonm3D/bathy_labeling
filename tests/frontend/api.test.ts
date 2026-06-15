@@ -5,6 +5,7 @@ import {
   buildLabelsUrl,
   buildProposalUrl,
   buildReprocessBeamUrl,
+  buildReprocessSelectDirectoryUrl,
   buildSegmentUrl,
 } from "../../frontend/src/api.js";
 
@@ -19,4 +20,8 @@ test("reprocess beam url encodes source paths safely", () => {
     buildReprocessBeamUrl("Guam/ATL24 sample.h5", "gt1l"),
     "/reprocess/beam?source=Guam%2FATL24+sample.h5&beam=gt1l",
   );
+});
+
+test("reprocess directory picker url points to native selector endpoint", () => {
+  assert.equal(buildReprocessSelectDirectoryUrl(), "/reprocess/select-directory");
 });

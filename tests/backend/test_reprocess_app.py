@@ -10,12 +10,12 @@ from bathy_labeler.backend.reprocess import ReprocessSession
 from tests.backend.test_hdf5_store import write_atl24_like_file
 
 
-def make_client(tmp_path: Path) -> tuple[TestClient, Path, Path]:
+def make_client(tmp_path: Path, **app_kwargs: object) -> tuple[TestClient, Path, Path]:
     input_dir = tmp_path / "inputs"
     output_dir = tmp_path / "outputs"
     write_atl24_like_file(input_dir / "ATL24_sample.h5")
     session = ReprocessSession()
-    return TestClient(create_reprocess_app(session=session)), input_dir, output_dir
+    return TestClient(create_reprocess_app(session=session, **app_kwargs)), input_dir, output_dir
 
 
 def test_reprocess_session_endpoints_configure_load_propose_reset_and_save(tmp_path: Path) -> None:
@@ -72,3 +72,34 @@ def test_reprocess_session_endpoints_configure_load_propose_reset_and_save(tmp_p
     )
     assert save.status_code == 200
     assert Path(save.json()["output_path"]).name == "ATL24_sample_manual.h5"
+
+
+def test_reprocess_directory_picker_endpoint_uses_injected_native_picker(tmp_path: Path) -> None:
+    calls: list[tuple[str, str | None]] = []
+
+    def picker(title: str, initial_dir: str | None) -> str | None:
+        calls.append((title, initial_dir))
+        return str(tmp_path / "selected")
+
+    client, input_dir, _output_dir = make_client(tmp_path, directory_picker=picker)
+
+    response = client.post(
+        "/reprocess/select-directory",
+        json={"title": "Choose ATL24 folder", "initial_dir": str(input_dir)},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"path": str(tmp_path / "selected")}
+    assert calls == [("Choose ATL24 folder", str(input_dir))]
+
+
+def test_reprocess_directory_picker_endpoint_reports_cancelled_selection(tmp_path: Path) -> None:
+    def picker(_title: str, _initial_dir: str | None) -> str | None:
+        return None
+
+    client, _input_dir, _output_dir = make_client(tmp_path, directory_picker=picker)
+
+    response = client.post("/reprocess/select-directory", json={})
+
+    assert response.status_code == 200
+    assert response.json() == {"path": None}

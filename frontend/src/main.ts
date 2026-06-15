@@ -22,6 +22,7 @@ import {
   resetReprocessBeam,
   saveLabels,
   saveReprocessSource,
+  selectReprocessDirectory,
 } from "./api.js";
 import type {
   FinalLabel,
@@ -39,10 +40,12 @@ const setupPanel = requireElement("setup-panel");
 const inputDir = requireInput("input-dir");
 const outputDir = requireInput("output-dir");
 const loadSessionButton = requireButton("load-session");
-const openHeading = requireElement("open-heading");
-const completeSection = requireElement("complete-section");
-const openList = requireElement("segments-open");
-const completeList = requireElement("segments-complete");
+const pickInputDirButton = requireButton("pick-input-dir");
+const pickOutputDirButton = requireButton("pick-output-dir");
+const fileHeading = requireElement("file-heading");
+const beamHeading = requireElement("beam-heading");
+const fileList = requireElement("file-list");
+const beamList = requireElement("beam-list");
 const segmentCount = requireElement("segment-count");
 const activeSegment = requireElement("active-segment");
 const statusElement = requireElement("status");
@@ -69,6 +72,7 @@ let settings: ProfileSettings = readSettings();
 let currentSegmentId: string | null = null;
 let currentSource: string | null = null;
 let currentBeam: string | null = null;
+let selectedReprocessSource: string | null = null;
 const reprocessLabelCache = new Map<string, LabelRow[]>();
 
 updateClassModeButtons();
@@ -76,6 +80,14 @@ void boot();
 
 loadSessionButton.addEventListener("click", () => {
   void configureAndLoadReprocessSession();
+});
+
+pickInputDirButton.addEventListener("click", () => {
+  void pickDirectory(inputDir, "Select ATL24 input folder", true);
+});
+
+pickOutputDirButton.addEventListener("click", () => {
+  void pickDirectory(outputDir, "Select output folder", false);
 });
 
 classButtons.addEventListener("click", (event) => {
@@ -146,8 +158,8 @@ async function boot(): Promise<void> {
 async function initializeReprocessMode(manifest: ManifestPayload): Promise<void> {
   appMode = "reprocess";
   setupPanel.hidden = false;
-  completeSection.hidden = true;
-  openHeading.textContent = "Files & Beams";
+  fileHeading.textContent = "Files";
+  beamHeading.textContent = "Beams";
   runProposal.textContent = "Run Smart Labeler";
   resetAtl24.hidden = false;
   saveLabelsButton.textContent = "Save H5";
@@ -161,7 +173,31 @@ async function initializeReprocessMode(manifest: ManifestPayload): Promise<void>
   } else {
     segmentCount.textContent = "Choose folders";
     activeSegment.textContent = "No beam selected";
+    fileList.replaceChildren();
+    beamList.replaceChildren();
     setStatus("");
+  }
+}
+
+async function pickDirectory(
+  input: HTMLInputElement,
+  title: string,
+  shouldSuggestOutput: boolean,
+): Promise<void> {
+  setStatus("Opening folder chooser");
+  try {
+    const selected = await selectReprocessDirectory(title, input.value.trim() || undefined);
+    if (!selected.path) {
+      setStatus("Folder selection cancelled");
+      return;
+    }
+    input.value = selected.path;
+    if (shouldSuggestOutput && !outputDir.value.trim()) {
+      outputDir.value = defaultOutputDir(selected.path);
+    }
+    setStatus("Folder selected");
+  } catch (error) {
+    setStatus(errorMessage(error));
   }
 }
 
@@ -180,6 +216,7 @@ async function configureAndLoadReprocessSession(): Promise<void> {
   currentPayload = null;
   currentLabels = [];
   selectedRows = new Set();
+  selectedReprocessSource = null;
   await loadReprocessSources();
 }
 
@@ -187,8 +224,9 @@ async function loadReprocessSources(): Promise<void> {
   const payload = await fetchReprocessSources();
   reprocessSources = payload.sources;
   segmentCount.textContent = `${payload.count.toLocaleString()} files`;
-  renderReprocessSourceList();
   const first = reprocessSources[0];
+  selectedReprocessSource = first?.source_relative_path ?? null;
+  renderReprocessSourceList();
   if (first?.beams[0]) {
     await selectReprocessBeam(first.source_relative_path, first.beams[0]);
   } else {
@@ -199,10 +237,36 @@ async function loadReprocessSources(): Promise<void> {
 }
 
 function renderReprocessSourceList(): void {
-  openList.replaceChildren(
-    ...reprocessSources.flatMap((source) => source.beams.map((beam) => reprocessBeamButton(source, beam))),
-  );
-  completeList.replaceChildren();
+  fileList.replaceChildren(...reprocessSources.map(reprocessFileButton));
+  renderReprocessBeamList(selectedReprocessSource);
+  updateReprocessSelectionButtons();
+}
+
+function renderReprocessBeamList(sourceRelativePath: string | null): void {
+  const source = reprocessSources.find((candidate) => candidate.source_relative_path === sourceRelativePath);
+  if (!source) {
+    beamList.replaceChildren();
+    return;
+  }
+  beamList.replaceChildren(...source.beams.map((beam) => reprocessBeamButton(source, beam)));
+  updateReprocessSelectionButtons();
+}
+
+function reprocessFileButton(source: ReprocessSource): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "segment-button";
+  button.dataset.source = source.source_relative_path;
+  button.innerHTML = `<span>${source.file_name}</span><small>${source.beams.length.toLocaleString()} beams · ${source.source_relative_path}</small>`;
+  button.addEventListener("click", () => {
+    selectedReprocessSource = source.source_relative_path;
+    renderReprocessBeamList(source.source_relative_path);
+    updateReprocessSelectionButtons();
+    if (source.beams[0]) {
+      void selectReprocessBeam(source.source_relative_path, source.beams[0]);
+    }
+  });
+  return button;
 }
 
 function reprocessBeamButton(source: ReprocessSource, beam: string): HTMLButtonElement {
@@ -211,7 +275,7 @@ function reprocessBeamButton(source: ReprocessSource, beam: string): HTMLButtonE
   button.className = "segment-button";
   button.dataset.source = source.source_relative_path;
   button.dataset.beam = beam;
-  button.innerHTML = `<span>${source.file_name} ${beam}</span><small>${source.source_relative_path}</small>`;
+  button.innerHTML = `<span>${beam}</span><small>${source.file_name}</small>`;
   button.addEventListener("click", () => {
     void selectReprocessBeam(source.source_relative_path, beam);
   });
@@ -220,6 +284,9 @@ function reprocessBeamButton(source: ReprocessSource, beam: string): HTMLButtonE
 
 async function selectReprocessBeam(source: string, beam: string): Promise<void> {
   setStatus("Loading beam");
+  selectedReprocessSource = source;
+  renderReprocessBeamList(source);
+  updateReprocessSelectionButtons();
   const payload = await fetchReprocessBeam(source, beam);
   currentSource = source;
   currentBeam = beam;
@@ -229,6 +296,7 @@ async function selectReprocessBeam(source: string, beam: string): Promise<void> 
   selectedRows = new Set();
   mapView.setSegment(currentPayload);
   activeSegment.textContent = `${payload.beam.file_name} ${beam} · full track`;
+  updateReprocessSelectionButtons();
   await rerender();
   setStatus(`${payload.beam.photon_count.toLocaleString()} photons`);
 }
@@ -302,8 +370,8 @@ function beamLabelsForSource(source: string): Record<string, LabelRow[]> {
 async function initializeTrainingMode(): Promise<void> {
   appMode = "training";
   setupPanel.hidden = true;
-  completeSection.hidden = false;
-  openHeading.textContent = "To Label";
+  fileHeading.textContent = "To Label";
+  beamHeading.textContent = "Labeled";
   runProposal.textContent = "Run Proposal";
   resetAtl24.hidden = true;
   saveLabelsButton.textContent = "Done";
@@ -329,8 +397,8 @@ async function loadSegments(selectSegmentId?: string): Promise<void> {
 function renderSegmentLists(): void {
   const open = segments.filter((segment) => segment.status !== "complete");
   const complete = segments.filter((segment) => segment.status === "complete");
-  openList.replaceChildren(...open.map(segmentButton));
-  completeList.replaceChildren(...complete.map(segmentButton));
+  fileList.replaceChildren(...open.map(segmentButton));
+  beamList.replaceChildren(...complete.map(segmentButton));
 }
 
 function segmentButton(segment: SegmentSummary): HTMLButtonElement {
@@ -339,6 +407,7 @@ function segmentButton(segment: SegmentSummary): HTMLButtonElement {
   button.className = "segment-button";
   button.dataset.segmentId = segment.segment_id;
   button.innerHTML = `<span>${segment.file_name} ${segment.beam}</span><small>${formatKm(segment.x_atc_start_m)}-${formatKm(segment.x_atc_end_m)} km · ${segment.status}</small>`;
+  button.classList.toggle("is-selected", segment.segment_id === currentSegmentId);
   button.addEventListener("click", () => {
     void selectSegment(segment.segment_id);
   });
@@ -359,6 +428,7 @@ async function selectSegment(segmentId: string): Promise<void> {
   selectedRows = new Set();
   activeSegment.textContent = `${currentPayload.segment.file_name} ${currentPayload.segment.beam} · ${formatKm(currentPayload.segment.x_atc_start_m)}-${formatKm(currentPayload.segment.x_atc_end_m)} km`;
   mapView.setSegment(currentPayload);
+  updateSegmentSelectionButtons();
   await rerender();
   setStatus(`${currentPayload.assigned.source_row.length.toLocaleString()} assigned photons`);
 }
@@ -435,6 +505,21 @@ function updateClassModeButtons(): void {
   }
 }
 
+function updateReprocessSelectionButtons(): void {
+  for (const button of fileList.querySelectorAll<HTMLButtonElement>(".segment-button[data-source]")) {
+    button.classList.toggle("is-selected", button.dataset.source === selectedReprocessSource);
+  }
+  for (const button of beamList.querySelectorAll<HTMLButtonElement>(".segment-button[data-source][data-beam]")) {
+    button.classList.toggle("is-selected", button.dataset.source === currentSource && button.dataset.beam === currentBeam);
+  }
+}
+
+function updateSegmentSelectionButtons(): void {
+  for (const button of document.querySelectorAll<HTMLButtonElement>(".segment-button[data-segment-id]")) {
+    button.classList.toggle("is-selected", button.dataset.segmentId === currentSegmentId);
+  }
+}
+
 function defaultOutputDir(inputPath: string): string {
   const trimmed = inputPath.trim().replace(/\/+$/, "");
   return trimmed ? `${trimmed}_labeled` : "";
@@ -458,6 +543,10 @@ function formatKm(meters: number): string {
 
 function setStatus(message: string): void {
   statusElement.textContent = message;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function requireElement(id: string): HTMLElement {
