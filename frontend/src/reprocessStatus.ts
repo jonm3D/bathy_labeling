@@ -9,11 +9,14 @@ export function reprocessBeamStatusClass(status: ReprocessBeamStatus): string {
 }
 
 export function reprocessFileStatusText(source: ReprocessSource): string {
+  if (source.invalid_beam_count > 0) {
+    return `invalid output · ${source.invalid_beam_count}/${source.beam_count} beams`;
+  }
   return `${source.status} · ${source.completed_beam_count}/${source.beam_count} beams`;
 }
 
 export function reprocessBeamStatusText(status: ReprocessBeamStatus): string {
-  return status;
+  return status === "invalid" ? "invalid output" : status;
 }
 
 export function labelOriginStatusText(origin: ReprocessLabelOrigin): string {

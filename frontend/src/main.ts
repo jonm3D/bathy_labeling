@@ -195,7 +195,7 @@ showClassificationsButton.addEventListener("click", () => {
     showClassifications: !settings.showClassifications,
   };
   updateShowClassificationsButton();
-  setStatus(settings.showClassifications ? "Classifications shown" : "Grey points");
+  setStatus(settings.showClassifications ? "Class colors on" : "Grey points");
   void rerender();
 });
 
@@ -255,9 +255,9 @@ async function initializeReprocessMode(manifest: ManifestPayload): Promise<void>
   fileHeading.textContent = "Files";
   beamHeading.textContent = "Beams";
   configureLabelButtonsForMode("reprocess");
-  runProposal.textContent = "Run Smart Labeler";
+  runProposal.textContent = "Suggest Labels";
   resetAtl24.hidden = false;
-  saveLabelsButton.textContent = "Save H5";
+  saveLabelsButton.textContent = "Save Cleaned H5";
   inputDir.value = manifest.input_dir ?? "";
   outputDir.value = manifest.output_dir ?? manifest.suggested_output_dir ?? defaultOutputDir(inputDir.value);
   if (manifest.configured) {
@@ -434,13 +434,13 @@ async function runReprocessProposal(): Promise<void> {
   if (!currentSource || !currentBeam) {
     return;
   }
-  setStatus("Running smart labeler");
+  setStatus("Building label suggestion");
   const seeds = currentLabels.filter((row) => row.label_source === "manual");
   const proposal = await requestReprocessProposal(currentSource, currentBeam, seeds);
   currentLabels = acceptProposal(currentLabels, proposal.rows);
   selectedRows = new Set();
   cacheCurrentReprocessLabels();
-  setStatus(`Smart labeler ready: ${countLabels(currentLabels)}`);
+  setStatus(`Suggestion ready: ${countLabels(currentLabels)}`);
   await rerender();
 }
 

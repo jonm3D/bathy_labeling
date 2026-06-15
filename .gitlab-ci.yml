@@ -1,0 +1,28 @@
+stages:
+  - test
+
+variables:
+  NPM_CONFIG_CACHE: "$CI_PROJECT_DIR/frontend/.npm"
+
+python-tests:
+  stage: test
+  image: ghcr.io/astral-sh/uv:python3.10-bookworm-slim
+  cache:
+    key: uv-cache
+    paths:
+      - .uv-cache/
+  script:
+    - uv run --cache-dir .uv-cache pytest -q
+
+frontend-tests:
+  stage: test
+  image: node:22-bookworm
+  cache:
+    key: npm-cache
+    paths:
+      - frontend/.npm/
+  script:
+    - cd frontend
+    - npm ci --prefer-offline
+    - npm run test:frontend
+    - npm run build

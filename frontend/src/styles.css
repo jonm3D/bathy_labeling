@@ -324,6 +324,11 @@ input {
   background: #fff1f2;
 }
 
+.segment-button.is-status-invalid {
+  border-color: #fb923c;
+  background: #fff7ed;
+}
+
 .segment-button.is-selected {
   border-color: #176f66;
   background: #edf8f6;
@@ -340,6 +345,10 @@ input {
 
 .segment-button.is-selected.is-status-unclassified {
   background: #ffe4e8;
+}
+
+.segment-button.is-selected.is-status-invalid {
+  background: #ffedd5;
 }
 
 .segment-button span,

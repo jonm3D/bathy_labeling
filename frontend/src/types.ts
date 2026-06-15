@@ -1,7 +1,7 @@
 export type FinalLabel = "surface" | "bathy" | "no_label" | "land" | "noise" | "ambiguous";
 export type LabelSource = "manual" | "auto";
 export type SegmentStatus = "unlabeled" | "draft" | "complete" | "stale" | "conflict";
-export type ReprocessBeamStatus = "complete" | "unclassified";
+export type ReprocessBeamStatus = "complete" | "unclassified" | "invalid";
 export type ReprocessFileStatus = ReprocessBeamStatus | "partial";
 export type ReprocessLabelOrigin = "manual_output" | "atl24_original";
 
@@ -81,6 +81,7 @@ export interface ReprocessSource {
   beams: string[];
   status: ReprocessFileStatus;
   completed_beam_count: number;
+  invalid_beam_count: number;
   beam_count: number;
   beam_statuses: Record<string, ReprocessBeamStatus>;
 }
@@ -131,6 +132,8 @@ export interface ReprocessSavePayload {
   source: string;
   outputs: Array<{ beam: string; output_path: string }>;
   output_paths: string[];
+  backups: Array<{ beam: string; backup_path: string }>;
+  backup_paths: string[];
   written_beams: string[];
   source_status: ReprocessSource;
 }

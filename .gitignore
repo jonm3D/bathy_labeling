@@ -6,8 +6,11 @@ sampling.env/
 .pytest_cache/
 .ruff_cache/
 *.egg-info/
+dist/
+outputs/
 frontend/node_modules/
 frontend/dist/
 frontend/.test-dist/
 frontend/.vite-cache/
 reference_data/
+src/bathy_labeler/static/

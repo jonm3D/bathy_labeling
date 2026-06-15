@@ -1,1 +1,1 @@
-"""Backend services for the ATL24 smart labeler."""
+"""Backend services for ATL24 bathymetry cleanup workflows."""

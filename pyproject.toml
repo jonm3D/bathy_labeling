@@ -5,7 +5,8 @@ build-backend = "hatchling.build"
 [project]
 name = "bathy-labeler"
 version = "0.1.0"
-description = "Local ATL24 photon smart-labeling workflow"
+description = "Local ATL24 bathymetry cleanup and HDF5 reclassification tool"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "fastapi>=0.115",
@@ -18,7 +19,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+analysis = [
+  "matplotlib>=3.8",
+]
 dev = [
+  "black>=24.8",
   "httpx>=0.27",
   "pytest>=8.2",
 ]
@@ -29,3 +34,7 @@ bathy-labeler = "bathy_labeler.cli:app"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.black]
+line-length = 80
+target-version = ["py310"]

@@ -14,11 +14,13 @@ test("reprocess file status maps to tile classes", () => {
   assert.equal(reprocessFileStatusClass("complete"), "is-status-complete");
   assert.equal(reprocessFileStatusClass("partial"), "is-status-partial");
   assert.equal(reprocessFileStatusClass("unclassified"), "is-status-unclassified");
+  assert.equal(reprocessFileStatusClass("invalid"), "is-status-invalid");
 });
 
 test("reprocess beam status maps to tile classes", () => {
   assert.equal(reprocessBeamStatusClass("complete"), "is-status-complete");
   assert.equal(reprocessBeamStatusClass("unclassified"), "is-status-unclassified");
+  assert.equal(reprocessBeamStatusClass("invalid"), "is-status-invalid");
 });
 
 test("reprocess file status text includes completed beam counts", () => {
@@ -29,6 +31,7 @@ test("reprocess file status text includes completed beam counts", () => {
     beams: ["gt1l", "gt1r"],
     status: "partial",
     completed_beam_count: 1,
+    invalid_beam_count: 0,
     beam_count: 2,
     beam_statuses: { gt1l: "complete", gt1r: "unclassified" },
   };
@@ -39,6 +42,7 @@ test("reprocess file status text includes completed beam counts", () => {
 test("reprocess beam status and label origin text are human-readable", () => {
   assert.equal(reprocessBeamStatusText("complete"), "complete");
   assert.equal(reprocessBeamStatusText("unclassified"), "unclassified");
+  assert.equal(reprocessBeamStatusText("invalid"), "invalid output");
   assert.equal(labelOriginStatusText("manual_output"), "Loaded manual output labels");
   assert.equal(labelOriginStatusText("atl24_original"), "Loaded original ATL24 labels");
 });
