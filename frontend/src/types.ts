@@ -101,6 +101,23 @@ export interface ReprocessBeamPayload {
   labels: LabelRow[];
 }
 
+export interface DemProfilePayload {
+  dem_path: string;
+  dem_name: string;
+  crs: string;
+  x_atc_m: number[];
+  dem_h_m: Array<number | null>;
+  sample_count: number;
+  valid_count: number;
+  sampling_method: "nearest" | string;
+}
+
+export interface DemSamplePayload {
+  source: string;
+  beam: string;
+  dem: DemProfilePayload;
+}
+
 export interface ReprocessSavePayload {
   source: string;
   outputs: Array<{ beam: string; output_path: string }>;

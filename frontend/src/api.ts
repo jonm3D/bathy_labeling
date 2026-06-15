@@ -1,6 +1,7 @@
 import type {
   LabelPayload,
   LabelRow,
+  DemSamplePayload,
   ManifestPayload,
   ProposalPayload,
   ReprocessBeamPayload,
@@ -97,6 +98,14 @@ export function resetReprocessBeam(source: string, beam: string): Promise<Propos
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source, beam }),
+  });
+}
+
+export function requestReprocessDemSample(source: string, beam: string, demPath: string): Promise<DemSamplePayload> {
+  return fetchJson<DemSamplePayload>("/reprocess/dem-sample", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source, beam, dem_path: demPath }),
   });
 }
 

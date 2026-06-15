@@ -34,3 +34,24 @@ test("profile data revision changes when classification visibility changes", () 
     profileDataRevision(baseLabels, new Set(), { pointSize: 4, pointOpacity: 0.8, showClassifications: false }),
   );
 });
+
+test("profile data revision changes when DEM display state changes", () => {
+  assert.notEqual(
+    profileDataRevision(baseLabels, new Set(), { pointSize: 4, pointOpacity: 0.8, showDem: false }),
+    profileDataRevision(baseLabels, new Set(), { pointSize: 4, pointOpacity: 0.8, showDem: true }),
+  );
+  assert.notEqual(
+    profileDataRevision(baseLabels, new Set(), {
+      pointSize: 4,
+      pointOpacity: 0.8,
+      showDem: true,
+      demRevision: "a",
+    }),
+    profileDataRevision(baseLabels, new Set(), {
+      pointSize: 4,
+      pointOpacity: 0.8,
+      showDem: true,
+      demRevision: "b",
+    }),
+  );
+});

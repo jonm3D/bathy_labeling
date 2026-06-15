@@ -1,15 +1,17 @@
 import Plotly from "plotly.js-dist-min";
-import type { LabelRow, SegmentPayload } from "./types.js";
+import type { DemSamplePayload, LabelRow, SegmentPayload } from "./types.js";
 import { manualSeedRowsForPlot } from "./plotRows.js";
 import { buildProfilePlotConfig, PROFILE_DEFAULT_DRAGMODE } from "./profileControls.js";
 import { profileDataRevision } from "./profileRevision.js";
 import { plotlyClearSelectionUpdate, plotlySelectionVisibilityStyle } from "./profileSelection.js";
 import { profilePointColor } from "./profileColors.js";
+import { demSampleRevision, profileDemTracePoints } from "./demTrace.js";
 
 export interface ProfileSettings {
   pointSize: number;
   pointOpacity: number;
   showClassifications: boolean;
+  showDem: boolean;
 }
 
 export type SelectionHandler = (rows: Set<number>) => void;
@@ -22,6 +24,7 @@ export async function renderProfile(
   labels: LabelRow[],
   selectedRows: Set<number>,
   settings: ProfileSettings,
+  demSample: DemSamplePayload | null,
   onSelect: SelectionHandler,
 ): Promise<void> {
   const labelByRow = new Map(labels.map((row) => [row.source_row, row]));
@@ -36,6 +39,7 @@ export async function renderProfile(
   const currentRanges = sameSegment ? readCurrentRanges(container) : null;
   const initialRanges = computeInitialRanges(payload);
   const fixedRanges = currentRanges ?? storedRanges ?? initialRanges;
+  const demTrace = settings.showDem && demSample ? profileDemTracePoints(demSample) : null;
 
   const traces = [
     {
@@ -69,6 +73,28 @@ export async function renderProfile(
       },
       hovertemplate: "x %{x:.3f} km<br>h %{y:.2f} m<br>row %{customdata}<extra></extra>",
     },
+    ...(demTrace
+      ? [
+          {
+            type: "scattergl",
+            mode: "lines+markers",
+            name: "DEM",
+            ...plotlySelectionVisibilityStyle(0.95),
+            x: demTrace.xKm,
+            y: demTrace.hM,
+            marker: {
+              color: "#111827",
+              size: 3,
+              opacity: 0.9,
+            },
+            line: {
+              color: "#111827",
+              width: 1,
+            },
+            hovertemplate: "x %{x:.3f} km<br>DEM %{y:.2f} m<extra>DEM</extra>",
+          },
+        ]
+      : []),
     {
       type: "scattergl",
       mode: "markers",
@@ -128,7 +154,10 @@ export async function renderProfile(
         zerolinecolor: "rgba(15, 23, 42, 0.18)",
       },
       uirevision: payload.segment.segment_id,
-      datarevision: profileDataRevision(labels, selectedRows, settings),
+      datarevision: profileDataRevision(labels, selectedRows, {
+        ...settings,
+        demRevision: demSampleRevision(settings.showDem ? demSample : null),
+      }),
       shapes: [
         {
           type: "rect",

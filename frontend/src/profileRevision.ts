@@ -4,6 +4,8 @@ export interface ProfileRevisionSettings {
   pointSize: number;
   pointOpacity: number;
   showClassifications?: boolean;
+  showDem?: boolean;
+  demRevision?: string;
 }
 
 export function profileDataRevision(
@@ -12,7 +14,10 @@ export function profileDataRevision(
   settings: ProfileRevisionSettings,
 ): string {
   let hash = 2166136261;
-  hash = hashString(hash, `${settings.pointSize}:${settings.pointOpacity}:${settings.showClassifications ?? true};`);
+  hash = hashString(
+    hash,
+    `${settings.pointSize}:${settings.pointOpacity}:${settings.showClassifications ?? true}:${settings.showDem ?? false}:${settings.demRevision ?? ""};`,
+  );
 
   for (const row of labels) {
     hash = hashString(hash, `${row.source_row}:${row.label}:${row.label_source};`);

@@ -141,6 +141,21 @@ def create_reprocess_app(
         except (RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.post("/reprocess/dem-sample")
+    def reprocess_dem_sample(body: dict[str, Any]) -> dict[str, object]:
+        try:
+            return session.sample_dem(
+                source_relative_path=str(body["source"]),
+                beam=str(body["beam"]),
+                dem_path=str(body["dem_path"]),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.post("/reprocess/save")
     def reprocess_save(body: dict[str, Any]) -> dict[str, object]:
         try:

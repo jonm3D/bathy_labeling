@@ -8,6 +8,7 @@ from typing import Any
 import h5py
 import numpy as np
 
+from bathy_labeler.backend.dem import sample_dem_along_track
 from bathy_labeler.backend.hdf5_store import _beam_strength, _read_photon_rows, _read_sc_orient, _validate_beam_lengths
 from bathy_labeler.backend.models import BEAM_NAMES, REQUIRED_DATASETS, FinalLabel, PhotonTable
 from bathy_labeler.backend.proposals import generate_seeded_proposal
@@ -105,6 +106,22 @@ class ReprocessSession:
     def reset_beam(self, source_relative_path: str, beam: str) -> dict[str, object]:
         payload = self.read_beam(source_relative_path, beam)
         return {"rows": payload["labels"], "metadata": {"source": source_relative_path, "beam": beam}}
+
+    def sample_dem(self, source_relative_path: str, beam: str, dem_path: str | Path) -> dict[str, object]:
+        source = self._source(source_relative_path)
+        with h5py.File(source.path, "r") as h5:
+            group = self._beam_group(h5, source_relative_path, beam)
+            photons = _read_all_photons(group)
+        return {
+            "source": source_relative_path,
+            "beam": beam,
+            "dem": sample_dem_along_track(
+                dem_path=dem_path,
+                lon=photons.lon,
+                lat=photons.lat,
+                x_atc_m=photons.x_atc_m,
+            ),
+        }
 
     def save_source(self, source_relative_path: str, beam_labels: dict[str, list[dict[str, Any]]]) -> dict[str, object]:
         self._require_configured()

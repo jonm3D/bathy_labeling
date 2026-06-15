@@ -14,6 +14,7 @@ import {
   configureReprocessSession,
   fetchLabels,
   fetchManifest,
+  requestReprocessDemSample,
   fetchReprocessBeam,
   fetchReprocessSources,
   fetchSegment,
@@ -26,6 +27,7 @@ import {
 } from "./api.js";
 import { reprocessSaveStatusText } from "./saveStatus.js";
 import type {
+  DemSamplePayload,
   FinalLabel,
   LabelRow,
   ManifestPayload,
@@ -40,6 +42,8 @@ type AppMode = "reprocess" | "training";
 const setupPanel = requireElement("setup-panel");
 const inputDir = requireInput("input-dir");
 const outputDir = requireInput("output-dir");
+const demPath = requireInput("dem-path");
+const demPathLabel = requireElement("dem-path-label");
 const loadSessionButton = requireButton("load-session");
 const fileHeading = requireElement("file-heading");
 const beamHeading = requireElement("beam-heading");
@@ -53,6 +57,7 @@ const mapContainer = requireElement("map");
 const classButtons = requireElement("class-buttons");
 const runProposal = requireButton("run-proposal");
 const showClassificationsButton = requireButton("show-classifications");
+const showDemButton = requireButton("show-dem");
 const resetAtl24 = requireButton("reset-atl24");
 const saveLabelsButton = requireButton("save-labels");
 const clearSelectionButton = requireButton("clear-selection");
@@ -70,6 +75,8 @@ let currentLabels: LabelRow[] = [];
 let selectedRows = new Set<number>();
 let activeLabel: FinalLabel | null = null;
 let settings: ProfileSettings = readSettings();
+let currentDemSample: DemSamplePayload | null = null;
+let currentDemKey: string | null = null;
 let currentSegmentId: string | null = null;
 let currentSource: string | null = null;
 let currentBeam: string | null = null;
@@ -78,6 +85,7 @@ const reprocessLabelCache = new Map<string, LabelRow[]>();
 
 configureLabelButtonsForMode("reprocess");
 updateShowClassificationsButton();
+updateShowDemButton();
 void boot();
 
 loadSessionButton.addEventListener("click", () => {
@@ -150,6 +158,37 @@ showClassificationsButton.addEventListener("click", () => {
   void rerender();
 });
 
+showDemButton.addEventListener("click", () => {
+  if (showDemButton.disabled) {
+    return;
+  }
+  settings = {
+    ...settings,
+    showDem: !settings.showDem,
+  };
+  updateShowDemButton();
+  if (settings.showDem) {
+    void loadDemAndRerender();
+  } else {
+    setStatus("DEM hidden");
+    void rerender();
+  }
+});
+
+demPath.addEventListener("change", () => {
+  currentDemSample = null;
+  currentDemKey = null;
+  if (!demPath.value.trim()) {
+    settings = { ...settings, showDem: false };
+  }
+  updateShowDemButton();
+  if (settings.showDem) {
+    void loadDemAndRerender();
+  } else {
+    void rerender();
+  }
+});
+
 for (const input of [pointSize, pointOpacity]) {
   input.addEventListener("input", () => {
     settings = readSettings();
@@ -170,6 +209,8 @@ async function boot(): Promise<void> {
 async function initializeReprocessMode(manifest: ManifestPayload): Promise<void> {
   appMode = "reprocess";
   setupPanel.hidden = false;
+  demPathLabel.hidden = false;
+  showDemButton.hidden = false;
   fileHeading.textContent = "Files";
   beamHeading.textContent = "Beams";
   configureLabelButtonsForMode("reprocess");
@@ -207,7 +248,10 @@ async function configureAndLoadReprocessSession(): Promise<void> {
   currentPayload = null;
   currentLabels = [];
   selectedRows = new Set();
+  currentDemSample = null;
+  currentDemKey = null;
   updateSelectionControls();
+  updateShowDemButton();
   selectedReprocessSource = null;
   await loadReprocessSources();
 }
@@ -224,6 +268,7 @@ async function loadReprocessSources(): Promise<void> {
   } else {
     clearProfile(profile);
     updateSelectionControls();
+    updateShowDemButton();
     activeSegment.textContent = "No beam selected";
     setStatus("No ATL24 beams found");
   }
@@ -287,11 +332,15 @@ async function selectReprocessBeam(source: string, beam: string): Promise<void> 
   currentPayload = segmentPayloadFromBeam(payload);
   currentLabels = cloneLabels(reprocessLabelCache.get(cacheKey(source, beam)) ?? payload.labels);
   selectedRows = new Set();
+  currentDemSample = null;
+  currentDemKey = null;
   mapView.setSegment(currentPayload);
   activeSegment.textContent = `${payload.beam.file_name} ${beam} · full track`;
   updateReprocessSelectionButtons();
+  updateShowDemButton();
+  const demStatus = settings.showDem ? await loadDemForCurrentBeam() : null;
   await rerender();
-  setStatus(`${payload.beam.photon_count.toLocaleString()} photons`);
+  setStatus(demStatus ?? `${payload.beam.photon_count.toLocaleString()} photons`);
 }
 
 function segmentPayloadFromBeam(payload: ReprocessBeamPayload): SegmentPayload {
@@ -363,6 +412,10 @@ function beamLabelsForSource(source: string): Record<string, LabelRow[]> {
 async function initializeTrainingMode(): Promise<void> {
   appMode = "training";
   setupPanel.hidden = true;
+  demPathLabel.hidden = true;
+  showDemButton.hidden = true;
+  settings = { ...settings, showDem: false };
+  updateShowDemButton();
   fileHeading.textContent = "To Label";
   beamHeading.textContent = "Labeled";
   configureLabelButtonsForMode("training");
@@ -454,12 +507,51 @@ async function saveCurrentTrainingSegment(): Promise<void> {
 
 async function rerender(): Promise<void> {
   updateSelectionControls();
+  updateShowDemButton();
   if (!currentPayload) {
     return;
   }
-  await renderProfile(profile, currentPayload, currentLabels, selectedRows, settings, (rows) => {
+  await renderProfile(profile, currentPayload, currentLabels, selectedRows, settings, activeDemSample(), (rows) => {
     void handleProfileSelection(rows);
   });
+}
+
+async function loadDemAndRerender(): Promise<void> {
+  const message = await loadDemForCurrentBeam();
+  await rerender();
+  if (message) {
+    setStatus(message);
+  }
+}
+
+async function loadDemForCurrentBeam(): Promise<string | null> {
+  updateShowDemButton();
+  const key = currentDemCacheKey();
+  if (!settings.showDem || !currentSource || !currentBeam || !key) {
+    return null;
+  }
+  if (currentDemKey === key && currentDemSample) {
+    return `DEM sampled: ${currentDemSample.dem.valid_count.toLocaleString()}/${currentDemSample.dem.sample_count.toLocaleString()}`;
+  }
+  setStatus("Sampling DEM");
+  try {
+    currentDemSample = await requestReprocessDemSample(currentSource, currentBeam, demPath.value.trim());
+    currentDemKey = key;
+    return `DEM sampled: ${currentDemSample.dem.valid_count.toLocaleString()}/${currentDemSample.dem.sample_count.toLocaleString()}`;
+  } catch (error) {
+    currentDemSample = null;
+    currentDemKey = null;
+    return `DEM unavailable: ${errorMessage(error)}`;
+  }
+}
+
+function activeDemSample(): DemSamplePayload | null {
+  return settings.showDem && currentDemKey === currentDemCacheKey() ? currentDemSample : null;
+}
+
+function currentDemCacheKey(): string | null {
+  const path = demPath.value.trim();
+  return currentSource && currentBeam && path ? `${currentSource}\u0000${currentBeam}\u0000${path}` : null;
 }
 
 async function handleProfileSelection(rows: Set<number>): Promise<void> {
@@ -503,11 +595,21 @@ function updateShowClassificationsButton(): void {
   showClassificationsButton.setAttribute("aria-pressed", String(settings.showClassifications));
 }
 
+function updateShowDemButton(): void {
+  const canShowDem = appMode === "reprocess" && Boolean(currentSource && currentBeam && demPath.value.trim());
+  if (!canShowDem && settings.showDem) {
+    settings = { ...settings, showDem: false };
+  }
+  showDemButton.disabled = !canShowDem;
+  showDemButton.setAttribute("aria-pressed", String(settings.showDem));
+}
+
 function readSettings(): ProfileSettings {
   return {
     pointSize: Number.parseFloat(pointSize.value),
     pointOpacity: Number.parseFloat(pointOpacity.value),
     showClassifications: showClassificationsButton.getAttribute("aria-pressed") !== "false",
+    showDem: showDemButton.getAttribute("aria-pressed") === "true",
   };
 }
 
@@ -590,6 +692,10 @@ function formatKm(meters: number): string {
 
 function setStatus(message: string): void {
   statusElement.textContent = message;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function requireElement(id: string): HTMLElement {

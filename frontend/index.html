@@ -22,12 +22,17 @@
               Output
               <input id="output-dir" type="text" placeholder="/absolute/path/to/ATL24_folder_labeled" autocomplete="off" />
             </label>
+            <label id="dem-path-label">
+              DEM GeoTIFF
+              <input id="dem-path" type="text" placeholder="/absolute/path/to/reference_dem.tif" autocomplete="off" />
+            </label>
             <button type="button" id="load-session">Load</button>
           </section>
           <section class="toolbar" aria-label="Label controls">
             <div class="class-buttons" id="class-buttons" role="group" aria-label="Active label mode"></div>
             <div class="actions">
               <button type="button" id="show-classifications" aria-pressed="true">Show Classifications</button>
+              <button type="button" id="show-dem" aria-pressed="false" disabled>Show DEM</button>
               <button type="button" id="run-proposal">Run Smart Labeler</button>
               <button type="button" id="reset-atl24">Reset to ATL24</button>
               <button type="button" id="save-labels">Save H5</button>
