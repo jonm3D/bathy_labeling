@@ -19,6 +19,15 @@ export type ProfileRelayoutHandler = (update: Record<string, unknown>) => void;
 
 const RANGE_BY_CONTAINER = new WeakMap<HTMLElement, { segmentId: string; ranges: AxisRanges }>();
 const RELAYOUT_EVENTS = ["plotly_relayout", "plotly_relayouting"] as const;
+const PLOT_TEXT_COLOR = "#172033";
+const PLOT_PAPER_COLOR = "#f6f8fb";
+const PLOT_BACKGROUND_COLOR = "#ffffff";
+const PLOT_GRID_COLOR = "rgba(15, 23, 42, 0.1)";
+const PLOT_ZERO_LINE_COLOR = "rgba(15, 23, 42, 0.18)";
+const PLOT_SELECTION_COLOR = "#172033";
+const PLOT_DEM_COLOR = "#334155";
+const PLOT_MANUAL_SEED_COLOR = "#4f46e5";
+const PLOT_SEGMENT_FILL_COLOR = "rgba(37, 99, 235, 0.08)";
 
 export async function renderProfile(
   container: HTMLElement,
@@ -86,12 +95,12 @@ export async function renderProfile(
             x: demTrace.xKm,
             y: demTrace.hM,
             marker: {
-              color: "#111827",
+              color: PLOT_DEM_COLOR,
               size: 3,
               opacity: 0.9,
             },
             line: {
-              color: "#111827",
+              color: PLOT_DEM_COLOR,
               width: 1,
             },
             hovertemplate: "x %{x:.3f} km<br>DEM %{y:.2f} m<extra>DEM</extra>",
@@ -111,7 +120,7 @@ export async function renderProfile(
         size: settings.pointSize + 4,
         opacity: 0.92,
         symbol: "circle-open",
-        line: { width: 2, color: "#111827" },
+        line: { width: 2, color: PLOT_SELECTION_COLOR },
       },
       hovertemplate: "selected row %{customdata}<extra></extra>",
     },
@@ -128,7 +137,7 @@ export async function renderProfile(
         size: settings.pointSize + 6,
         opacity: 0.95,
         symbol: "circle-open",
-        line: { width: 2, color: "#f97316" },
+        line: { width: 2, color: PLOT_MANUAL_SEED_COLOR },
       },
       hovertemplate: "manual seed row %{customdata}<extra></extra>",
     },
@@ -139,22 +148,22 @@ export async function renderProfile(
     traces,
     {
       margin: { l: 56, r: 18, t: 20, b: 42 },
-      paper_bgcolor: "#f8fafc",
-      plot_bgcolor: "#ffffff",
-      font: { color: "#172033" },
+      paper_bgcolor: PLOT_PAPER_COLOR,
+      plot_bgcolor: PLOT_BACKGROUND_COLOR,
+      font: { color: PLOT_TEXT_COLOR },
       dragmode: PROFILE_DEFAULT_DRAGMODE,
       showlegend: false,
       xaxis: {
         title: { text: "x_atc (km)" },
-        gridcolor: "rgba(15, 23, 42, 0.1)",
+        gridcolor: PLOT_GRID_COLOR,
         range: fixedRanges.x,
         zeroline: false,
       },
       yaxis: {
         title: { text: "ortho_h (m)" },
-        gridcolor: "rgba(15, 23, 42, 0.1)",
+        gridcolor: PLOT_GRID_COLOR,
         range: fixedRanges.y,
-        zerolinecolor: "rgba(15, 23, 42, 0.18)",
+        zerolinecolor: PLOT_ZERO_LINE_COLOR,
       },
       uirevision: payload.segment.segment_id,
       datarevision: profileDataRevision(labels, selectedRows, {
@@ -170,7 +179,7 @@ export async function renderProfile(
           x1: payload.segment.x_atc_end_m / 1000,
           y0: 0,
           y1: 1,
-          fillcolor: "rgba(42, 157, 143, 0.08)",
+          fillcolor: PLOT_SEGMENT_FILL_COLOR,
           line: { width: 0 },
           layer: "below",
         },

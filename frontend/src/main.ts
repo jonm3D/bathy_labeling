@@ -22,6 +22,7 @@ import {
   setProfileXRange,
   type ProfileSettings,
 } from "./profilePlot.js";
+import { labelColorForClass } from "./profileColors.js";
 import {
   labelOriginStatusText,
   reprocessBeamStatusClass,
@@ -46,6 +47,24 @@ import {
 } from "./api.js";
 import { reprocessSaveStatusText } from "./saveStatus.js";
 import { createPayloadSwitchGuard } from "./syncState.js";
+import {
+  addRecentPath,
+  defaultOutputDir,
+  datasetSummaryText,
+  emptyBeamSelectionDetail,
+  evaluateDatasetDraft,
+  labelHistoryCanRedo,
+  labelHistoryCanUndo,
+  labelHistoryRedo,
+  labelHistorySnapshot,
+  labelHistoryUndo,
+  pushLabelHistory,
+  labelDisplayName,
+  shortcutActionForKey,
+  selectionDetailText,
+  type LabelHistory,
+  type SaveState,
+} from "./workflowUi.js";
 import type {
   DemSamplePayload,
   FinalLabel,
@@ -64,22 +83,44 @@ const inputDir = requireInput("input-dir");
 const outputDir = requireInput("output-dir");
 const demPath = requireInput("dem-path");
 const demPathLabel = requireElement("dem-path-label");
+const datasetStatus = requireElement("dataset-status");
+const datasetFields = requireElement("dataset-fields");
+const datasetSummary = requireElement("dataset-summary");
+const datasetSummaryTextElement = requireElement("dataset-summary-text");
 const loadSessionButton = requireButton("load-session");
+const editDatasetButton = requireButton("edit-dataset");
+const chooseInputDirButton = requireButton("choose-input-dir");
+const suggestOutputDirButton = requireButton("suggest-output-dir");
+const chooseDemPathButton = requireButton("choose-dem-path");
+const inputDirError = requireElement("input-dir-error");
+const outputDirError = requireElement("output-dir-error");
+const demPathError = requireElement("dem-path-error");
+const inputDirRecents = requireDataList("input-dir-recents");
+const outputDirRecents = requireDataList("output-dir-recents");
+const demPathRecents = requireDataList("dem-path-recents");
 const fileHeading = requireElement("file-heading");
 const beamHeading = requireElement("beam-heading");
 const fileList = requireElement("file-list");
 const beamList = requireElement("beam-list");
 const segmentCount = requireElement("segment-count");
 const activeSegment = requireElement("active-segment");
+const selectionDetail = requireElement("selection-detail");
 const statusElement = requireElement("status");
 const profile = requireElement("profile");
 const mapContainer = requireElement("map");
 const classButtons = requireElement("class-buttons");
+const emptyWorkflow = requireElement("empty-workflow");
+const labelingControls = requireElement("labeling-controls");
+const actionControls = requireElement("action-controls");
 const runProposal = requireButton("run-proposal");
-const showClassificationsButton = requireButton("show-classifications");
-const showDemButton = requireButton("show-dem");
+const showClassificationsToggle = requireInput("show-classifications");
+const showClassificationsControl = requireElement("show-classifications-control");
+const showDemToggle = requireInput("show-dem");
+const showDemControl = requireElement("show-dem-control");
 const resetAtl24 = requireButton("reset-atl24");
 const saveLabelsButton = requireButton("save-labels");
+const undoLabelsButton = requireButton("undo-labels");
+const redoLabelsButton = requireButton("redo-labels");
 const clearSelectionButton = requireButton("clear-selection");
 const syncWithMapButton = requireButton("sync-with-map");
 const pointSize = requireInput("point-size");
@@ -110,19 +151,87 @@ let removeMapCameraListener: (() => void) | null = null;
 let ignoreNextMapCameraChange = false;
 let ignoreProfileRelayout = false;
 const reprocessLabelCache = new Map<string, LabelRow[]>();
+let outputPathWasEdited = false;
+let datasetEditing = true;
+let datasetLoading = false;
+let labelHistory: LabelHistory = labelHistorySnapshot([]);
+const labelBaselines = new Map<string, LabelRow[]>();
+const dirtySelections = new Set<string>();
+
+type RecentPathKind = "input" | "output" | "dem";
+
+const RECENT_PATH_STORAGE_KEYS: Record<RecentPathKind, string> = {
+  input: "bathy-labeler.recentInputPaths",
+  output: "bathy-labeler.recentOutputPaths",
+  dem: "bathy-labeler.recentDemPaths",
+};
 
 configureLabelButtonsForMode("reprocess");
+renderRecentPathOptions();
+updateDatasetControls();
+showEmptySelection("No beam selected");
+updateSelectionControls();
 updateShowClassificationsButton();
 updateShowDemButton();
 updateSyncWithMapButton();
-void boot();
+void boot().catch(handleBootError);
 
 loadSessionButton.addEventListener("click", () => {
   void configureAndLoadReprocessSession();
 });
 
+editDatasetButton.addEventListener("click", () => {
+  setDatasetEditing(true);
+  updateDatasetControls();
+});
+
+inputDir.addEventListener("input", () => {
+  if (!outputPathWasEdited || !outputDir.value.trim()) {
+    outputDir.value = defaultOutputDir(inputDir.value);
+  }
+  updateDatasetControls();
+});
+
+outputDir.addEventListener("input", () => {
+  outputPathWasEdited = true;
+  updateDatasetControls();
+});
+
+demPath.addEventListener("input", () => {
+  updateDatasetControls();
+  if (!demPath.value.trim()) {
+    settings = { ...settings, showDem: false };
+  }
+  updateShowDemButton();
+});
+
+chooseInputDirButton.addEventListener("click", () => {
+  if (promptForPath("ATL24 input folder", inputDir)) {
+    if (!outputPathWasEdited || !outputDir.value.trim()) {
+      outputDir.value = defaultOutputDir(inputDir.value);
+    }
+    updateDatasetControls();
+  }
+});
+
+suggestOutputDirButton.addEventListener("click", () => {
+  outputDir.value = defaultOutputDir(inputDir.value);
+  outputPathWasEdited = false;
+  updateDatasetControls();
+});
+
+chooseDemPathButton.addEventListener("click", () => {
+  if (promptForPath("DEM GeoTIFF", demPath)) {
+    handleDemPathChanged();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  void handleKeyboardShortcut(event);
+});
+
 classButtons.addEventListener("click", (event) => {
-  const target = event.target;
+  const target = event.target instanceof HTMLElement ? event.target.closest<HTMLButtonElement>("button[data-label]") : null;
   if (!(target instanceof HTMLButtonElement)) {
     return;
   }
@@ -130,13 +239,7 @@ classButtons.addEventListener("click", (event) => {
   if (!isFinalLabel(label)) {
     return;
   }
-  activeLabel = toggleLabelMode(activeLabel, label);
-  updateClassModeButtons();
-  if (activeLabel && selectedRows.size > 0) {
-    void applyLabelToSelectedRows(activeLabel);
-    return;
-  }
-  setStatus(activeLabel ? `${formatLabel(activeLabel)} mode` : "Label mode off");
+  void setActiveLabelMode(label);
 });
 
 runProposal.addEventListener("click", async () => {
@@ -154,27 +257,33 @@ resetAtl24.addEventListener("click", async () => {
   if (appMode !== "reprocess" || !currentSource || !currentBeam) {
     return;
   }
+  if (!window.confirm("Reset this beam to the original ATL24 labels?")) {
+    return;
+  }
   const reset = await resetReprocessBeam(currentSource, currentBeam);
+  recordLabelHistory(reset.rows);
   currentLabels = reset.rows;
   selectedRows = new Set();
   cacheCurrentReprocessLabels();
+  updateDirtyStateForCurrentSelection();
   setStatus("Reset to ATL24");
   await rerender();
 });
 
 saveLabelsButton.addEventListener("click", async () => {
-  if (!currentPayload) {
-    return;
-  }
-  if (appMode === "reprocess") {
-    await saveCurrentReprocessSource();
-  } else {
-    await saveCurrentTrainingSegment();
-  }
+  await saveCurrentLabels();
 });
 
 clearSelectionButton.addEventListener("click", () => {
   void clearCurrentSelection();
+});
+
+undoLabelsButton.addEventListener("click", () => {
+  void undoLabelChange();
+});
+
+redoLabelsButton.addEventListener("click", () => {
+  void redoLabelChange();
 });
 
 syncWithMapButton.addEventListener("click", () => {
@@ -189,23 +298,23 @@ syncWithMapButton.addEventListener("click", () => {
   }
 });
 
-showClassificationsButton.addEventListener("click", () => {
+showClassificationsToggle.addEventListener("change", () => {
   settings = {
     ...settings,
-    showClassifications: !settings.showClassifications,
+    showClassifications: showClassificationsToggle.checked,
   };
   updateShowClassificationsButton();
   setStatus(settings.showClassifications ? "Class colors on" : "Grey points");
   void rerender();
 });
 
-showDemButton.addEventListener("click", () => {
-  if (showDemButton.disabled) {
+showDemToggle.addEventListener("change", () => {
+  if (showDemToggle.disabled) {
     return;
   }
   settings = {
     ...settings,
-    showDem: !settings.showDem,
+    showDem: showDemToggle.checked,
   };
   updateShowDemButton();
   if (settings.showDem) {
@@ -217,17 +326,7 @@ showDemButton.addEventListener("click", () => {
 });
 
 demPath.addEventListener("change", () => {
-  currentDemSample = null;
-  currentDemKey = null;
-  if (!demPath.value.trim()) {
-    settings = { ...settings, showDem: false };
-  }
-  updateShowDemButton();
-  if (settings.showDem) {
-    void loadDemAndRerender();
-  } else {
-    void rerender();
-  }
+  handleDemPathChanged();
 });
 
 for (const input of [pointSize, pointOpacity]) {
@@ -247,61 +346,98 @@ async function boot(): Promise<void> {
   }
 }
 
+function handleBootError(error: unknown): void {
+  segmentCount.textContent = "Dataset";
+  showEmptySelection("No beam selected");
+  fileList.replaceChildren();
+  beamList.replaceChildren();
+  setDatasetEditing(true);
+  const message = `Backend unavailable: ${formatErrorMessage(error)}`;
+  setDatasetStatus(message);
+  setStatus(message);
+}
+
 async function initializeReprocessMode(manifest: ManifestPayload): Promise<void> {
   appMode = "reprocess";
   setupPanel.hidden = false;
   demPathLabel.hidden = false;
-  showDemButton.hidden = false;
+  showDemControl.hidden = false;
+  showClassificationsControl.hidden = false;
   fileHeading.textContent = "Files";
   beamHeading.textContent = "Beams";
   configureLabelButtonsForMode("reprocess");
-  runProposal.textContent = "Suggest Labels";
+  runProposal.textContent = "Suggest from seeds";
   resetAtl24.hidden = false;
-  saveLabelsButton.textContent = "Save Cleaned H5";
+  saveLabelsButton.textContent = "Save cleaned H5";
   inputDir.value = manifest.input_dir ?? "";
   outputDir.value = manifest.output_dir ?? manifest.suggested_output_dir ?? defaultOutputDir(inputDir.value);
+  outputPathWasEdited = Boolean(manifest.output_dir) && outputDir.value !== defaultOutputDir(inputDir.value);
+  setDatasetEditing(!manifest.configured);
+  updateDatasetControls();
   if (manifest.configured) {
     if (!manifest.output_dir && inputDir.value && outputDir.value) {
       await configureReprocessSession(inputDir.value, outputDir.value);
     }
     await loadReprocessSources();
   } else {
-    segmentCount.textContent = "Choose folders";
-    activeSegment.textContent = "No beam selected";
+    segmentCount.textContent = "Dataset";
+    showEmptySelection("No beam selected");
     fileList.replaceChildren();
     beamList.replaceChildren();
     setStatus("");
+    updateSelectionControls();
   }
 }
 
 async function configureAndLoadReprocessSession(): Promise<void> {
-  const inputValue = inputDir.value.trim();
-  if (!inputValue) {
-    setStatus("Input folder required");
+  const draft = evaluateDatasetDraft(inputDir.value, outputDir.value, demPath.value);
+  if (!draft.canLoad) {
+    setDatasetStatus(draft.message);
+    setStatus(draft.message);
     return;
   }
-  if (!outputDir.value.trim()) {
-    outputDir.value = defaultOutputDir(inputValue);
-  }
+  inputDir.value = draft.inputPath;
+  outputDir.value = draft.outputPath;
+  demPath.value = draft.demPath;
+  datasetLoading = true;
+  updateDatasetControls();
   setStatus("Loading ATL24 folder");
-  await configureReprocessSession(inputValue, outputDir.value.trim());
-  reprocessLabelCache.clear();
-  currentPayload = null;
-  setActiveProfileRange(null);
-  currentLabels = [];
-  selectedRows = new Set();
-  currentDemSample = null;
-  currentDemKey = null;
-  updateSelectionControls();
-  updateShowDemButton();
-  selectedReprocessSource = null;
-  await loadReprocessSources();
+  let failureMessage: string | null = null;
+  try {
+    await configureReprocessSession(draft.inputPath, draft.outputPath);
+    rememberCurrentPaths();
+    setDatasetEditing(false);
+    reprocessLabelCache.clear();
+    labelBaselines.clear();
+    dirtySelections.clear();
+    currentPayload = null;
+    setActiveProfileRange(null);
+    currentLabels = [];
+    selectedRows = new Set();
+    currentDemSample = null;
+    currentDemKey = null;
+    updateSelectionControls();
+    updateShowDemButton();
+    selectedReprocessSource = null;
+    await loadReprocessSources();
+  } catch (error) {
+    failureMessage = `Load failed: ${formatErrorMessage(error)}`;
+    setDatasetEditing(true);
+  } finally {
+    datasetLoading = false;
+    updateDatasetControls();
+  }
+  if (failureMessage) {
+    setDatasetStatus(failureMessage);
+    setStatus(failureMessage);
+  }
 }
 
 async function loadReprocessSources(): Promise<void> {
   const payload = await fetchReprocessSources();
   reprocessSources = payload.sources;
   segmentCount.textContent = `${payload.count.toLocaleString()} files`;
+  setDatasetStatus("Loaded");
   const first = reprocessSources[0];
   selectedReprocessSource = first?.source_relative_path ?? null;
   renderReprocessSourceList();
@@ -312,7 +448,7 @@ async function loadReprocessSources(): Promise<void> {
     setActiveProfileRange(null);
     updateSelectionControls();
     updateShowDemButton();
-    activeSegment.textContent = "No beam selected";
+    showEmptySelection("No beam selected");
     setStatus("No ATL24 beams found");
   }
 }
@@ -383,11 +519,18 @@ async function selectReprocessBeam(source: string, beam: string): Promise<void> 
     currentPayload = segmentPayloadFromBeam(payload);
     setActiveProfileRange(currentPayload);
     currentLabels = cloneLabels(reprocessLabelCache.get(cacheKey(source, beam)) ?? payload.labels);
+    const selectionKey = currentSelectionKey();
+    if (selectionKey && !labelBaselines.has(selectionKey)) {
+      labelBaselines.set(selectionKey, cloneLabels(payload.labels));
+    }
+    labelHistory = labelHistorySnapshot(currentLabels);
+    updateDirtyStateForCurrentSelection();
     selectedRows = new Set();
     currentDemSample = null;
     currentDemKey = null;
     mapView.setSegment(currentPayload, { fit: !isMapSyncEnabled() });
-    activeSegment.textContent = `${payload.beam.file_name} ${beam} · full track · ${labelOriginShortText(payload.label_origin)}`;
+    activeSegment.textContent = `${payload.beam.file_name} ${beam}`;
+    updateActiveSelectionDetail();
     updateReprocessSelectionButtons();
     updateShowDemButton();
     const demStatus = settings.showDem ? await loadDemForCurrentBeam() : null;
@@ -437,9 +580,12 @@ async function runReprocessProposal(): Promise<void> {
   setStatus("Building label suggestion");
   const seeds = currentLabels.filter((row) => row.label_source === "manual");
   const proposal = await requestReprocessProposal(currentSource, currentBeam, seeds);
-  currentLabels = acceptProposal(currentLabels, proposal.rows);
+  const nextLabels = acceptProposal(currentLabels, proposal.rows);
+  recordLabelHistory(nextLabels);
+  currentLabels = nextLabels;
   selectedRows = new Set();
   cacheCurrentReprocessLabels();
+  updateDirtyStateForCurrentSelection();
   setStatus(`Suggestion ready: ${countLabels(currentLabels)}`);
   await rerender();
 }
@@ -452,7 +598,9 @@ async function saveCurrentReprocessSource(): Promise<void> {
   setStatus("Saving H5");
   const saved = await saveReprocessSource(currentSource, beamLabelsForSource(currentSource));
   applyReprocessSourceStatus(saved.source_status);
+  markReprocessSourceSaved(currentSource);
   setStatus(reprocessSaveStatusText(saved));
+  await rerender();
 }
 
 function applyReprocessSourceStatus(source: ReprocessSource): void {
@@ -484,7 +632,7 @@ async function initializeTrainingMode(): Promise<void> {
   appMode = "training";
   setupPanel.hidden = true;
   demPathLabel.hidden = true;
-  showDemButton.hidden = true;
+  showDemControl.hidden = true;
   settings = { ...settings, showDem: false };
   updateShowDemButton();
   fileHeading.textContent = "To Label";
@@ -509,7 +657,7 @@ async function loadSegments(selectSegmentId?: string): Promise<void> {
     clearProfile(profile);
     setActiveProfileRange(null);
     updateSelectionControls();
-    activeSegment.textContent = "No segment selected";
+    showEmptySelection("No segment selected");
   }
   setStatus("");
 }
@@ -552,8 +700,15 @@ async function selectSegment(segmentId: string): Promise<void> {
     currentSegmentId = segmentId;
     currentSource = null;
     currentBeam = null;
+    const selectionKey = currentSelectionKey();
+    if (selectionKey) {
+      labelBaselines.set(selectionKey, cloneLabels(currentLabels));
+    }
+    labelHistory = labelHistorySnapshot(currentLabels);
+    updateDirtyStateForCurrentSelection();
     selectedRows = new Set();
     activeSegment.textContent = `${currentPayload.segment.file_name} ${currentPayload.segment.beam} · ${formatKm(currentPayload.segment.x_atc_start_m)}-${formatKm(currentPayload.segment.x_atc_end_m)} km`;
+    updateActiveSelectionDetail();
     mapView.setSegment(currentPayload, { fit: !isMapSyncEnabled() });
     updateSegmentSelectionButtons();
     await rerender();
@@ -574,8 +729,11 @@ async function runTrainingProposal(): Promise<void> {
   setStatus("Running proposal");
   const seeds = currentLabels.filter((row) => row.label_source === "manual");
   const proposal = await requestProposal(currentPayload.segment.segment_id, seeds);
-  currentLabels = acceptProposal(currentLabels, proposal.rows);
+  const nextLabels = acceptProposal(currentLabels, proposal.rows);
+  recordLabelHistory(nextLabels);
+  currentLabels = nextLabels;
   selectedRows = new Set();
+  updateDirtyStateForCurrentSelection();
   setStatus(`Proposal ready: ${countLabels(currentLabels)}`);
   await rerender();
 }
@@ -587,6 +745,7 @@ async function saveCurrentTrainingSegment(): Promise<void> {
   setStatus("Saving");
   const saved = await saveLabels(currentSegmentId, currentLabels);
   currentLabels = saved.rows;
+  markCurrentSelectionSaved();
   setStatus("Saved");
   await loadSegments(currentSegmentId);
 }
@@ -594,6 +753,7 @@ async function saveCurrentTrainingSegment(): Promise<void> {
 async function rerender(): Promise<void> {
   updateSelectionControls();
   updateShowDemButton();
+  updateActiveSelectionDetail();
   if (!currentPayload) {
     return;
   }
@@ -656,10 +816,13 @@ async function applyLabelToSelectedRows(label: FinalLabel): Promise<void> {
     return;
   }
   const selectedCount = selectedRows.size;
-  currentLabels = labelSelectionWithMode(currentLabels, selectedRows, label);
+  const nextLabels = labelSelectionWithMode(currentLabels, selectedRows, label);
+  recordLabelHistory(nextLabels);
+  currentLabels = nextLabels;
   if (appMode === "reprocess") {
     cacheCurrentReprocessLabels();
   }
+  updateDirtyStateForCurrentSelection();
   selectedRows = new Set();
   setStatus(`Set ${selectedCount.toLocaleString()} ${formatLabel(label).toLowerCase()} photons`);
   await rerender();
@@ -806,12 +969,341 @@ function updateSyncWithMapButton(): void {
   setMapSyncEnabled(isMapSyncEnabled());
 }
 
+function setDatasetEditing(editing: boolean): void {
+  datasetEditing = editing;
+  updateDatasetControls();
+  updateSelectionControls();
+}
+
+async function setActiveLabelMode(label: FinalLabel): Promise<void> {
+  if (!currentPayload) {
+    return;
+  }
+  activeLabel = toggleLabelMode(activeLabel, label);
+  updateClassModeButtons();
+  if (activeLabel && selectedRows.size > 0) {
+    await applyLabelToSelectedRows(activeLabel);
+    return;
+  }
+  setStatus(activeLabel ? `${formatLabel(activeLabel)} mode` : "Label mode off");
+}
+
+async function handleKeyboardShortcut(event: KeyboardEvent): Promise<void> {
+  const targetTagName = event.target instanceof HTMLElement ? event.target.tagName.toLowerCase() : undefined;
+  const action = shortcutActionForKey({
+    key: event.key,
+    metaKey: event.metaKey,
+    ctrlKey: event.ctrlKey,
+    shiftKey: event.shiftKey,
+    targetTagName,
+  });
+  if (action === null) {
+    return;
+  }
+  if (action === "save") {
+    if (!saveLabelsButton.disabled) {
+      event.preventDefault();
+      await saveCurrentLabels();
+    }
+    return;
+  }
+  if (action === "undo") {
+    if (!undoLabelsButton.disabled) {
+      event.preventDefault();
+      await undoLabelChange();
+    }
+    return;
+  }
+  if (action === "redo") {
+    if (!redoLabelsButton.disabled) {
+      event.preventDefault();
+      await redoLabelChange();
+    }
+    return;
+  }
+  if (!currentPayload) {
+    return;
+  }
+  event.preventDefault();
+  if (action === "escape") {
+    if (selectedRows.size > 0) {
+      await clearCurrentSelection();
+      return;
+    }
+    activeLabel = null;
+    updateClassModeButtons();
+    setStatus("Label mode off");
+    return;
+  }
+  if (action === "label_surface") {
+    await setActiveLabelMode("surface");
+  } else if (action === "label_bathy") {
+    await setActiveLabelMode("bathy");
+  } else if (action === "label_erase") {
+    await setActiveLabelMode("no_label");
+  }
+}
+
+async function saveCurrentLabels(): Promise<void> {
+  if (!currentPayload) {
+    return;
+  }
+  if (appMode === "reprocess") {
+    await saveCurrentReprocessSource();
+  } else {
+    await saveCurrentTrainingSegment();
+  }
+}
+
+function recordLabelHistory(nextLabels: LabelRow[]): void {
+  labelHistory = pushLabelHistory(labelHistory, currentLabels, nextLabels);
+}
+
+async function undoLabelChange(): Promise<void> {
+  const undone = labelHistoryUndo(labelHistory, currentLabels);
+  labelHistory = undone.history;
+  currentLabels = undone.labels;
+  selectedRows = new Set();
+  if (appMode === "reprocess") {
+    cacheCurrentReprocessLabels();
+  }
+  updateDirtyStateForCurrentSelection();
+  setStatus("Undid label change");
+  await rerender();
+}
+
+async function redoLabelChange(): Promise<void> {
+  const redone = labelHistoryRedo(labelHistory, currentLabels);
+  labelHistory = redone.history;
+  currentLabels = redone.labels;
+  selectedRows = new Set();
+  if (appMode === "reprocess") {
+    cacheCurrentReprocessLabels();
+  }
+  updateDirtyStateForCurrentSelection();
+  setStatus("Redid label change");
+  await rerender();
+}
+
 function updateSelectionControls(): void {
+  const hasPayload = currentPayload !== null;
+  const saveable = hasSaveableChanges();
+  emptyWorkflow.hidden = hasPayload;
+  labelingControls.hidden = !hasPayload;
+  actionControls.hidden = !hasPayload;
   clearSelectionButton.disabled = selectedRows.size === 0;
+  runProposal.disabled = !hasPayload;
+  saveLabelsButton.disabled = !hasPayload || !saveable;
+  saveLabelsButton.classList.toggle("is-primary", hasPayload && saveable && !datasetEditing);
+  undoLabelsButton.disabled = !hasPayload || !labelHistoryCanUndo(labelHistory);
+  redoLabelsButton.disabled = !hasPayload || !labelHistoryCanRedo(labelHistory);
+  resetAtl24.disabled = appMode !== "reprocess" || !currentSource || !currentBeam;
+  showClassificationsToggle.disabled = !hasPayload;
+  pointSize.disabled = !hasPayload;
+  pointOpacity.disabled = !hasPayload;
+  for (const button of classModeButtons) {
+    button.disabled = !hasPayload;
+  }
+}
+
+function updateDatasetControls(): void {
+  const draft = evaluateDatasetDraft(inputDir.value, outputDir.value, demPath.value);
+  datasetFields.hidden = !datasetEditing;
+  datasetSummary.hidden = datasetEditing || !draft.inputPath;
+  datasetSummaryTextElement.textContent = datasetSummaryText(draft.inputPath, draft.outputPath, draft.demPath);
+  loadSessionButton.disabled = datasetLoading || !draft.canLoad;
+  loadSessionButton.textContent = datasetLoading ? "Loading..." : "Load dataset";
+  loadSessionButton.classList.toggle("is-primary", datasetEditing);
+  editDatasetButton.disabled = datasetLoading;
+  chooseInputDirButton.disabled = datasetLoading;
+  suggestOutputDirButton.disabled = datasetLoading || !draft.suggestedOutputPath;
+  chooseDemPathButton.disabled = datasetLoading;
+  updatePathError(inputDir, inputDirError, draft.fieldErrors.input);
+  updatePathError(outputDir, outputDirError, draft.fieldErrors.output);
+  updatePathError(demPath, demPathError, draft.fieldErrors.dem);
+  setDatasetStatus(datasetEditing ? draft.message : "Loaded");
+}
+
+function setDatasetStatus(message: string): void {
+  datasetStatus.textContent = message;
+}
+
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function updatePathError(input: HTMLInputElement, errorElement: HTMLElement, message: string | undefined): void {
+  input.setAttribute("aria-invalid", message ? "true" : "false");
+  errorElement.textContent = message ?? "";
+  errorElement.hidden = !message || !datasetEditing;
+}
+
+function promptForPath(label: string, input: HTMLInputElement): boolean {
+  const nextPath = window.prompt(label, input.value.trim());
+  if (nextPath === null) {
+    return false;
+  }
+  input.value = nextPath.trim();
+  return true;
+}
+
+function handleDemPathChanged(): void {
+  currentDemSample = null;
+  currentDemKey = null;
+  updateDatasetControls();
+  if (!demPath.value.trim()) {
+    settings = { ...settings, showDem: false };
+  }
+  updateShowDemButton();
+  if (settings.showDem) {
+    void loadDemAndRerender();
+  } else {
+    void rerender();
+  }
+}
+
+function rememberCurrentPaths(): void {
+  rememberRecentPath("input", inputDir.value);
+  rememberRecentPath("output", outputDir.value);
+  rememberRecentPath("dem", demPath.value);
+  renderRecentPathOptions();
+}
+
+function rememberRecentPath(kind: RecentPathKind, path: string): void {
+  const recentPaths = addRecentPath(loadRecentPaths(kind), path);
+  try {
+    window.localStorage.setItem(RECENT_PATH_STORAGE_KEYS[kind], JSON.stringify(recentPaths));
+  } catch {
+    return;
+  }
+}
+
+function loadRecentPaths(kind: RecentPathKind): string[] {
+  try {
+    const stored = window.localStorage.getItem(RECENT_PATH_STORAGE_KEYS[kind]);
+    if (!stored) {
+      return [];
+    }
+    const parsed: unknown = JSON.parse(stored);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function renderRecentPathOptions(): void {
+  renderDataList(inputDirRecents, loadRecentPaths("input"));
+  renderDataList(outputDirRecents, loadRecentPaths("output"));
+  renderDataList(demPathRecents, loadRecentPaths("dem"));
+}
+
+function renderDataList(dataList: HTMLDataListElement, paths: string[]): void {
+  dataList.replaceChildren(
+    ...paths.map((path) => {
+      const option = document.createElement("option");
+      option.value = path;
+      return option;
+    }),
+  );
+}
+
+function showEmptySelection(message: string): void {
+  activeSegment.textContent = message;
+  selectionDetail.textContent = emptyBeamSelectionDetail();
+}
+
+function updateActiveSelectionDetail(): void {
+  if (!currentPayload) {
+    selectionDetail.textContent = emptyBeamSelectionDetail();
+    return;
+  }
+  selectionDetail.textContent = selectionDetailText(
+    currentPayload.assigned.source_row.length,
+    currentLabels,
+    selectionSaveState(),
+  );
+}
+
+function currentSelectionKey(): string | null {
+  if (appMode === "reprocess") {
+    return currentSource && currentBeam ? cacheKey(currentSource, currentBeam) : null;
+  }
+  return currentSegmentId ? `training\u0000${currentSegmentId}` : null;
+}
+
+function selectionSaveState(): SaveState {
+  if (!currentPayload) {
+    return "neutral";
+  }
+  return isCurrentSelectionDirty() ? "dirty" : "saved";
+}
+
+function isCurrentSelectionDirty(): boolean {
+  const key = currentSelectionKey();
+  return key ? dirtySelections.has(key) : false;
+}
+
+function hasSaveableChanges(): boolean {
+  if (appMode !== "reprocess") {
+    return isCurrentSelectionDirty();
+  }
+  if (!currentSource) {
+    return false;
+  }
+  return Array.from(dirtySelections).some((key) => key.split("\u0000")[0] === currentSource);
+}
+
+function updateDirtyStateForCurrentSelection(): void {
+  const key = currentSelectionKey();
+  if (!key) {
+    return;
+  }
+  const baseline = labelBaselines.get(key);
+  if (!baseline || labelsEqual(baseline, currentLabels)) {
+    dirtySelections.delete(key);
+  } else {
+    dirtySelections.add(key);
+  }
+}
+
+function markCurrentSelectionSaved(): void {
+  const key = currentSelectionKey();
+  if (!key) {
+    return;
+  }
+  labelBaselines.set(key, cloneLabels(currentLabels));
+  dirtySelections.delete(key);
+  labelHistory = labelHistorySnapshot(currentLabels);
+}
+
+function markReprocessSourceSaved(source: string): void {
+  for (const [key, labels] of reprocessLabelCache.entries()) {
+    const [cachedSource] = key.split("\u0000");
+    if (cachedSource === source) {
+      labelBaselines.set(key, cloneLabels(labels));
+      dirtySelections.delete(key);
+    }
+  }
+  markCurrentSelectionSaved();
+}
+
+function labelsEqual(left: LabelRow[], right: LabelRow[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((row, index) => {
+      const candidate = right[index];
+      return (
+        candidate !== undefined &&
+        row.source_row === candidate.source_row &&
+        row.label === candidate.label &&
+        row.label_source === candidate.label_source
+      );
+    })
+  );
 }
 
 function updateShowClassificationsButton(): void {
-  showClassificationsButton.setAttribute("aria-pressed", String(settings.showClassifications));
+  showClassificationsToggle.checked = settings.showClassifications;
 }
 
 function updateShowDemButton(): void {
@@ -819,16 +1311,16 @@ function updateShowDemButton(): void {
   if (!canShowDem && settings.showDem) {
     settings = { ...settings, showDem: false };
   }
-  showDemButton.disabled = !canShowDem;
-  showDemButton.setAttribute("aria-pressed", String(settings.showDem));
+  showDemToggle.disabled = !canShowDem;
+  showDemToggle.checked = settings.showDem;
 }
 
 function readSettings(): ProfileSettings {
   return {
     pointSize: Number.parseFloat(pointSize.value),
     pointOpacity: Number.parseFloat(pointOpacity.value),
-    showClassifications: showClassificationsButton.getAttribute("aria-pressed") !== "false",
-    showDem: showDemButton.getAttribute("aria-pressed") === "true",
+    showClassifications: showClassificationsToggle.checked,
+    showDem: showDemToggle.checked,
   };
 }
 
@@ -849,6 +1341,7 @@ function updateClassModeButtons(): void {
     const isActive = label === activeLabel;
     button.setAttribute("aria-pressed", String(isActive));
     button.classList.toggle("is-active", isActive);
+    button.disabled = currentPayload === null;
   }
 }
 
@@ -866,8 +1359,29 @@ function labelModeButton(option: { label: FinalLabel; text: string }): HTMLButto
   const button = document.createElement("button");
   button.type = "button";
   button.dataset.label = option.label;
-  button.textContent = option.text;
+  button.className = "label-mode-button";
+  button.style.setProperty("--label-swatch", labelColorForClass(option.label));
+  const swatch = document.createElement("span");
+  swatch.className = "label-swatch";
+  swatch.setAttribute("aria-hidden", "true");
+  const text = document.createElement("span");
+  text.textContent = option.text;
+  button.replaceChildren(swatch, text);
+  button.title = labelShortcutTitle(option.label);
   return button;
+}
+
+function labelShortcutTitle(label: FinalLabel): string {
+  if (label === "surface") {
+    return "Surface (1)";
+  }
+  if (label === "bathy") {
+    return "Bathy (2)";
+  }
+  if (label === "no_label") {
+    return "Erase (3)";
+  }
+  return labelDisplayName(label);
 }
 
 function updateReprocessSelectionButtons(): void {
@@ -885,11 +1399,6 @@ function updateSegmentSelectionButtons(): void {
   }
 }
 
-function defaultOutputDir(inputPath: string): string {
-  const trimmed = inputPath.trim().replace(/\/+$/, "");
-  return trimmed ? `${trimmed}_labeled` : "";
-}
-
 function cacheKey(source: string, beam: string): string {
   return `${source}\u0000${beam}`;
 }
@@ -899,18 +1408,11 @@ function cloneLabels(labels: LabelRow[]): LabelRow[] {
 }
 
 function formatLabel(label: FinalLabel): string {
-  if (label === "no_label") {
-    return "No label";
-  }
-  return label.charAt(0).toUpperCase() + label.slice(1);
+  return labelDisplayName(label);
 }
 
 function formatKm(meters: number): string {
   return (meters / 1000).toFixed(1);
-}
-
-function labelOriginShortText(origin: ReprocessBeamPayload["label_origin"]): string {
-  return origin === "manual_output" ? "manual output" : "original ATL24";
 }
 
 function setStatus(message: string): void {
@@ -941,6 +1443,14 @@ function requireInput(id: string): HTMLInputElement {
   const element = requireElement(id);
   if (!(element instanceof HTMLInputElement)) {
     throw new Error(`Element is not an input: ${id}`);
+  }
+  return element;
+}
+
+function requireDataList(id: string): HTMLDataListElement {
+  const element = requireElement(id);
+  if (!(element instanceof HTMLDataListElement)) {
+    throw new Error(`Element is not a datalist: ${id}`);
   }
   return element;
 }

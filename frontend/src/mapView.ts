@@ -10,6 +10,9 @@ import { boundsForCoordinates } from "./mapTrack.js";
 import type { DistanceRange, MapSyncView, ScreenSample } from "./mapSync.js";
 import type { SegmentPayload } from "./types.js";
 
+const MAP_TRACK_OUTLINE_COLOR = "#0f172a";
+const MAP_TRACK_COLOR = "#0891b2";
+
 export interface LabelerMap {
   setSegment(payload: SegmentPayload, options?: SegmentMapOptions): void;
   syncToSegmentRange(syncView: MapSyncView, animated: boolean): void;
@@ -166,13 +169,13 @@ function ensureLayers(map: maplibregl.Map): void {
       id: "segment-track-outline",
       type: "line",
       source: "segment-track",
-      paint: { "line-color": "#0f172a", "line-width": 5, "line-opacity": 0.65 },
+      paint: { "line-color": MAP_TRACK_OUTLINE_COLOR, "line-width": 5, "line-opacity": 0.65 },
     });
     map.addLayer({
       id: "segment-track",
       type: "line",
       source: "segment-track",
-      paint: { "line-color": "#2a9d8f", "line-width": 2.5, "line-opacity": 0.95 },
+      paint: { "line-color": MAP_TRACK_COLOR, "line-width": 2.5, "line-opacity": 0.95 },
     });
   }
 }

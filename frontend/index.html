@@ -14,44 +14,122 @@
             <p id="segment-count">Loading</p>
           </header>
           <section class="setup-panel" id="setup-panel">
-            <label>
-              Input
-              <input id="input-dir" type="text" placeholder="/absolute/path/to/ATL24_folder" autocomplete="off" />
-            </label>
-            <label>
-              Output
-              <input id="output-dir" type="text" placeholder="/absolute/path/to/ATL24_folder_labeled" autocomplete="off" />
-            </label>
-            <label id="dem-path-label">
-              DEM GeoTIFF
-              <input id="dem-path" type="text" placeholder="/absolute/path/to/reference_dem.tif" autocomplete="off" />
-            </label>
-            <button type="button" id="load-session">Load</button>
+            <div class="section-heading">
+              <h2>Dataset</h2>
+              <p id="dataset-status">Loading</p>
+            </div>
+            <div class="dataset-summary" id="dataset-summary" hidden>
+              <span id="dataset-summary-text"></span>
+              <button type="button" id="edit-dataset">Edit</button>
+            </div>
+            <div class="dataset-fields" id="dataset-fields">
+              <div class="path-field">
+                <label for="input-dir">ATL24 input</label>
+                <div class="path-control">
+                  <input
+                    id="input-dir"
+                    type="text"
+                    placeholder="/absolute/path/to/ATL24_folder"
+                    autocomplete="off"
+                    list="input-dir-recents"
+                    aria-describedby="input-dir-error"
+                  />
+                  <button type="button" id="choose-input-dir">Choose...</button>
+                </div>
+                <p class="field-error" id="input-dir-error" hidden></p>
+                <datalist id="input-dir-recents"></datalist>
+              </div>
+              <div class="path-field">
+                <label for="output-dir">Output</label>
+                <div class="path-control">
+                  <input
+                    id="output-dir"
+                    type="text"
+                    placeholder="/absolute/path/to/ATL24_folder_labeled"
+                    autocomplete="off"
+                    list="output-dir-recents"
+                    aria-describedby="output-dir-error"
+                  />
+                  <button type="button" id="suggest-output-dir">Suggest</button>
+                </div>
+                <p class="field-error" id="output-dir-error" hidden></p>
+                <datalist id="output-dir-recents"></datalist>
+              </div>
+              <div class="path-field" id="dem-path-label">
+                <label for="dem-path">DEM overlay</label>
+                <div class="path-control">
+                  <input
+                    id="dem-path"
+                    type="text"
+                    placeholder="/absolute/path/to/reference_dem.tif"
+                    autocomplete="off"
+                    list="dem-path-recents"
+                    aria-describedby="dem-path-error"
+                  />
+                  <button type="button" id="choose-dem-path">Choose...</button>
+                </div>
+                <p class="field-error" id="dem-path-error" hidden></p>
+                <datalist id="dem-path-recents"></datalist>
+              </div>
+              <button type="button" id="load-session" class="is-primary">Load dataset</button>
+            </div>
           </section>
           <section class="toolbar" aria-label="Label controls">
-            <div class="class-buttons" id="class-buttons" role="group" aria-label="Active label mode"></div>
-            <div class="actions">
-              <button type="button" id="show-classifications" aria-pressed="true">Color by Class</button>
-              <button type="button" id="show-dem" aria-pressed="false" disabled>Show DEM</button>
-              <button type="button" id="run-proposal">Suggest Labels</button>
-              <button type="button" id="reset-atl24">Reset to ATL24</button>
-              <button type="button" id="save-labels">Save Cleaned H5</button>
-              <button type="button" id="clear-selection" disabled>Clear selection</button>
-            </div>
-            <div class="slider-grid">
-              <label>
-                Size
-                <input id="point-size" type="range" min="2" max="9" step="1" value="4" />
-              </label>
-              <label>
-                Opacity
-                <input id="point-opacity" type="range" min="0.15" max="1" step="0.05" value="0.82" />
-              </label>
-            </div>
-          </section>
-          <section class="status-row">
-            <div id="active-segment">No beam selected</div>
-            <div id="status"></div>
+            <div class="empty-workflow" id="empty-workflow">Load a dataset to start labeling</div>
+            <section class="toolbar-section" id="labeling-controls" aria-labelledby="labeling-heading" hidden>
+              <div class="section-heading compact">
+                <h2 id="labeling-heading">Labeling</h2>
+              </div>
+              <div class="class-buttons" id="class-buttons" role="group" aria-label="Active label mode"></div>
+              <div class="slider-grid">
+                <label>
+                  Brush size
+                  <input id="point-size" type="range" min="2" max="9" step="1" value="4" />
+                </label>
+                <label>
+                  Overlay opacity
+                  <input id="point-opacity" type="range" min="0.15" max="1" step="0.05" value="0.82" />
+                </label>
+              </div>
+              <div class="view-toggles" aria-label="View options">
+                <label class="checkbox-control" id="show-classifications-control">
+                  <input type="checkbox" id="show-classifications" checked />
+                  Class colors
+                </label>
+                <label class="checkbox-control" id="show-dem-control">
+                  <input type="checkbox" id="show-dem" disabled />
+                  DEM
+                </label>
+              </div>
+            </section>
+            <section class="selection-panel" aria-labelledby="selection-heading">
+              <div class="section-heading compact">
+                <h2 id="selection-heading">Selection</h2>
+                <div id="status"></div>
+              </div>
+              <div id="active-segment">No beam selected</div>
+              <div id="selection-detail">Click a beam to edit labels</div>
+            </section>
+            <section class="toolbar-section" id="action-controls" aria-labelledby="actions-heading" hidden>
+              <div class="section-heading compact">
+                <h2 id="actions-heading">Actions</h2>
+              </div>
+              <div class="actions primary-actions">
+                <button type="button" id="save-labels">Save cleaned H5</button>
+                <button type="button" id="run-proposal">Suggest from seeds</button>
+              </div>
+              <div class="actions secondary-actions">
+                <button type="button" id="undo-labels" disabled>Undo</button>
+                <button type="button" id="redo-labels" disabled>Redo</button>
+              </div>
+              <details class="more-actions">
+                <summary>More</summary>
+                <div class="actions secondary-actions">
+                  <button type="button" id="reset-atl24">Reset to ATL24</button>
+                  <button type="button" id="clear-selection" disabled>Clear selection</button>
+                </div>
+              </details>
+            </section>
           </section>
         </section>
         <section class="picker-column">

@@ -10,7 +10,7 @@ export interface LabelModeOption {
 const REPROCESS_LABELS: LabelModeOption[] = [
   { label: "surface", text: "Surface" },
   { label: "bathy", text: "Bathy" },
-  { label: "no_label", text: "No label" },
+  { label: "no_label", text: "Erase" },
 ];
 
 const TRAINING_LABELS: LabelModeOption[] = [

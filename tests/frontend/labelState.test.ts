@@ -86,7 +86,7 @@ test("default mode exposes only surface bathy and no label classes", () => {
   assert.deepEqual(labelsForAppMode("reprocess"), [
     { label: "surface", text: "Surface" },
     { label: "bathy", text: "Bathy" },
-    { label: "no_label", text: "No label" },
+    { label: "no_label", text: "Erase" },
   ]);
 });
 

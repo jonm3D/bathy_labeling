@@ -6,6 +6,7 @@ import {
   buildProposalUrl,
   buildReprocessBeamUrl,
   buildSegmentUrl,
+  fetchManifest,
 } from "../../frontend/src/api.js";
 
 test("segment urls encode ids safely", () => {
@@ -19,4 +20,18 @@ test("reprocess beam url encodes source paths safely", () => {
     buildReprocessBeamUrl("Guam/ATL24 sample.h5", "gt1l"),
     "/reprocess/beam?source=Guam%2FATL24+sample.h5&beam=gt1l",
   );
+});
+
+test("api calls reject HTML fallback responses with backend guidance", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response("<!doctype html><title>Vite fallback</title>", {
+      status: 200,
+      headers: { "Content-Type": "text/html" },
+    });
+  try {
+    await assert.rejects(fetchManifest(), /Expected JSON from \/manifest; received text\/html/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

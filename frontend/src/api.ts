@@ -17,6 +17,12 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     const body = (await response.json().catch(() => ({ detail: response.statusText }))) as { detail?: unknown };
     throw new Error(String(body.detail ?? response.statusText));
   }
+  const contentType = response.headers.get("Content-Type") ?? "";
+  if (!contentType.toLowerCase().includes("application/json")) {
+    throw new Error(
+      `Expected JSON from ${url}; received ${contentType || "unknown content type"}. Is the backend server running?`,
+    );
+  }
   return response.json() as Promise<T>;
 }
 
