@@ -31,6 +31,9 @@ LABEL_TO_CLASS_PH: dict[FinalLabel, int] = {
     "no_label": 0,
 }
 
+SOURCE_SIZE_ATTR = "bathy_labeler_source_size_bytes"
+SOURCE_MTIME_ATTR = "bathy_labeler_source_modified_ns"
+
 BeamOutputStatus = Literal["complete", "unclassified", "invalid"]
 FileOutputStatus = Literal["complete", "partial", "unclassified", "invalid"]
 LabelOrigin = Literal["manual_output", "atl24_original"]
@@ -320,6 +323,7 @@ class ReprocessSession:
                     source.relative_path,
                     beam,
                     expected_count,
+                    source_path=source.path,
                 )
                 if not is_valid:
                     beam_statuses[beam] = "invalid"
@@ -367,6 +371,7 @@ class ReprocessSession:
             source.relative_path,
             beam,
             expected_count=len(photons.source_row),
+            source_path=source.path,
         )
         return (
             labels_from_atl24_classes(photons.source_row, class_ph),
@@ -410,6 +415,7 @@ class ReprocessSession:
             _write_beam_class_values(
                 tmp_path=tmp_path,
                 source_relative_path=source_relative_path,
+                source_path=source.path,
                 beam=beam,
                 class_values=class_values,
                 beam_group=self._beam_group,
@@ -490,10 +496,23 @@ def _read_manual_class_ph(
     source_relative_path: str,
     beam: str,
     expected_count: int,
+    source_path: Path,
 ) -> list[int | None]:
     source_beam = f"{source_relative_path}/{beam}"
     try:
         with h5py.File(manual_path, "r") as h5:
+            if not _manual_output_matches_source(h5, source_path):
+                raise ValueError(
+                    "Manual output does not match the current source file for "
+                    f"{source_beam}: {manual_path}"
+                )
+            if not _manual_output_matches_target(
+                h5, source_relative_path, beam
+            ):
+                raise ValueError(
+                    "Manual output does not match the requested source and beam for "
+                    f"{source_beam}: {manual_path}"
+                )
             if beam not in h5:
                 message = (
                     "Manual output missing beam for "
@@ -511,10 +530,10 @@ def _read_manual_class_ph(
         raise ValueError(
             f"Manual output is unreadable for {source_beam}: " f"{manual_path}"
         ) from exc
-    if int(class_ph.shape[0]) != expected_count:
+    if class_ph.shape != (expected_count,):
         raise ValueError(
             f"Manual output class_ph length mismatch for {source_beam}: "
-            f"expected {expected_count}, found {int(class_ph.shape[0])}"
+            f"expected shape ({expected_count},), found {class_ph.shape}"
         )
     return [
         None if np.ma.is_masked(value) else int(value) for value in class_ph
@@ -526,9 +545,18 @@ def _manual_output_has_valid_class_ph(
     source_relative_path: str,
     beam: str,
     expected_count: int,
+    source_path: Path | None = None,
 ) -> bool:
     try:
         with h5py.File(manual_path, "r") as h5:
+            if source_path is not None and not _manual_output_matches_source(
+                h5, source_path
+            ):
+                return False
+            if not _manual_output_matches_target(
+                h5, source_relative_path, beam
+            ):
+                return False
             if beam not in h5:
                 return False
             group = h5[beam]
@@ -550,9 +578,13 @@ def _valid_beams(path: Path) -> list[str]:
                 if beam not in h5:
                     continue
                 group = h5[beam]
-                if all(name in group for name in REQUIRED_DATASETS):
+                if not all(name in group for name in REQUIRED_DATASETS):
+                    continue
+                try:
                     _validate_beam_lengths(group)
-                    beams.append(beam)
+                except ValueError:
+                    continue
+                beams.append(beam)
             return beams
     except (OSError, ValueError):
         return []
@@ -570,12 +602,16 @@ def _temporary_output_path(output_path: Path) -> Path:
 def _write_beam_class_values(
     tmp_path: Path,
     source_relative_path: str,
+    source_path: Path,
     beam: str,
     class_values: np.ndarray,
     beam_group: Callable[[h5py.File, str, str], h5py.Group],
 ) -> None:
     with h5py.File(tmp_path, "r+") as h5:
         group = beam_group(h5, source_relative_path, beam)
+        for other_beam in BEAM_NAMES:
+            if other_beam != beam and other_beam in h5:
+                del h5[other_beam]
         photon_count = int(group["x_atc"].shape[0])
         if int(class_values.shape[0]) != photon_count:
             raise ValueError(
@@ -590,7 +626,9 @@ def _write_beam_class_values(
         else:
             group["class_ph"][:] = class_values
         _set_manual_confidence_values(group)
-        _set_cleaner_metadata(h5, group, source_relative_path, beam)
+        _set_cleaner_metadata(
+            h5, group, source_relative_path, source_path, beam
+        )
 
 
 def _beam_payload(
@@ -627,14 +665,23 @@ def _class_values_for_group(
     labels: list[dict[str, Any]],
 ) -> np.ndarray:
     count = int(group["x_atc"].shape[0])
+    if len(labels) != count:
+        raise ValueError(
+            f"A complete beam must contain exactly {count} label rows; "
+            f"found {len(labels)}"
+        )
     if "class_ph" in group:
         values = np.asarray(group["class_ph"][:]).astype(np.int16)
     else:
         values = np.zeros(count, dtype=np.int16)
+    seen_rows: set[int] = set()
     for row in labels:
         source_row = int(row["source_row"])
         if source_row < 0 or source_row >= count:
             raise ValueError(f"source_row out of bounds: {source_row}")
+        if source_row in seen_rows:
+            raise ValueError(f"Duplicate label row for source_row {source_row}")
+        seen_rows.add(source_row)
         label = str(row["label"])
         if label not in LABEL_TO_CLASS_PH:
             raise ValueError(f"Invalid label: {label}")
@@ -651,14 +698,53 @@ def _set_cleaner_metadata(
     h5: h5py.File,
     group: h5py.Group,
     source_relative_path: str,
+    source_path: Path,
     beam: str,
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     h5.attrs["bathy_labeler_tool"] = "ATL24 Bathymetry Cleaner"
     h5.attrs["bathy_labeler_source"] = source_relative_path
+    source_stat = source_path.stat()
+    h5.attrs[SOURCE_SIZE_ATTR] = source_stat.st_size
+    h5.attrs[SOURCE_MTIME_ATTR] = source_stat.st_mtime_ns
     h5.attrs["bathy_labeler_updated_utc"] = now
     group.attrs["bathy_labeler_cleaned_beam"] = beam
     group.attrs["bathy_labeler_updated_utc"] = now
+
+
+def _manual_output_matches_source(h5: h5py.File, source_path: Path) -> bool:
+    try:
+        stored_size = int(h5.attrs[SOURCE_SIZE_ATTR])
+        stored_mtime = int(h5.attrs[SOURCE_MTIME_ATTR])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+    source_stat = source_path.stat()
+    return (
+        stored_size == source_stat.st_size
+        and stored_mtime == source_stat.st_mtime_ns
+    )
+
+
+def _manual_output_matches_target(
+    h5: h5py.File,
+    source_relative_path: str,
+    beam: str,
+) -> bool:
+    if beam not in h5:
+        return False
+    if any(other_beam != beam and other_beam in h5 for other_beam in BEAM_NAMES):
+        return False
+    stored_source = _h5_attr_text(h5.attrs.get("bathy_labeler_source"))
+    stored_beam = _h5_attr_text(
+        h5[beam].attrs.get("bathy_labeler_cleaned_beam")
+    )
+    return stored_source == source_relative_path and stored_beam == beam
+
+
+def _h5_attr_text(value: object) -> str | None:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value if isinstance(value, str) else None
 
 
 def _set_existing_dataset_constant(

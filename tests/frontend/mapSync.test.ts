@@ -102,6 +102,35 @@ test("computeMapSyncView clamps out-of-data profile ranges to real track endpoin
   assertClose(view.center[0], 145);
 });
 
+test("computeMapSyncView follows the short path across the antimeridian", () => {
+  const context = photonTable({
+    x_atc_m: [0, 10_000, 20_000],
+    lon: [179.8, -179.9, -179.6],
+    lat: [10, 10, 10],
+  });
+
+  const view = computeMapSyncView(samplePayload({ context }), [0, 20]);
+
+  assert.ok(view);
+  assertClose(view.start[0], 179.8);
+  assertClose(view.end[0], 180.4);
+  assertClose(view.center[0], 180.1);
+});
+
+test("computeMapSyncView canonicalizes reverse horizontal bearings", () => {
+  const context = photonTable({
+    x_atc_m: [0, 10_000],
+    lon: [-75.72714, -75.730794],
+    lat: [36.141139, 36.171593],
+  });
+
+  const view = computeMapSyncView(samplePayload({ context }), [0, 10]);
+
+  assert.ok(view);
+  assert.ok(view.bearing > 0 && view.bearing < 90);
+  assert.equal(view.profileReversed, true);
+});
+
 test("computeMapSyncView returns null for unusable payloads", () => {
   const singlePointContext = photonTable({
     x_atc_m: [0],

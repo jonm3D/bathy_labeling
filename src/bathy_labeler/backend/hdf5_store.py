@@ -95,18 +95,27 @@ class Atl24Store:
                                 )
                             )
                             continue
-                        _validate_beam_lengths(h5[beam_name])
-                        segments.extend(
-                            _segments_for_beam(
-                                h5=h5,
-                                source=source,
-                                beam_name=beam_name,
-                                sc_orient=sc_orient,
-                                segment_length_m=segment_length_m,
-                                context_margin_m=context_margin_m,
+                        try:
+                            _validate_beam_lengths(h5[beam_name])
+                            segments.extend(
+                                _segments_for_beam(
+                                    h5=h5,
+                                    source=source,
+                                    beam_name=beam_name,
+                                    sc_orient=sc_orient,
+                                    segment_length_m=segment_length_m,
+                                    context_margin_m=context_margin_m,
+                                )
                             )
-                        )
-            except OSError as exc:
+                        except ValueError as exc:
+                            warnings.append(
+                                WarningRecord(
+                                    source_relative_path=relative_path,
+                                    beam=beam_name,
+                                    message=str(exc),
+                                )
+                            )
+            except (OSError, ValueError) as exc:
                 warnings.append(WarningRecord(relative_path, None, f"Unable to read HDF5 file: {exc}"))
 
         return cls(

@@ -115,3 +115,21 @@ def test_status_is_stale_when_row_key_checksum_does_not_match(tmp_path: Path):
     )
 
     assert sidecars.status_for(payload.segment, shifted) == "stale"
+
+
+def test_status_is_stale_when_csv_contains_duplicate_row_keys(tmp_path: Path):
+    project_root, payload = make_payload(tmp_path)
+    sidecars = LabelSidecarStore(project_root)
+    saved = sidecars.save(
+        payload.segment,
+        payload.assigned,
+        make_labels(payload.assigned.source_row),
+    )
+    rows = read_csv_rows(saved.csv_path)
+    rows[-1] = dict(rows[0])
+    with saved.csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+
+    assert sidecars.status_for(payload.segment, payload.assigned) == "stale"

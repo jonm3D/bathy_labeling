@@ -5,6 +5,7 @@ import {
   acceptProposal,
   assignManualLabel,
   createDefaultLabels,
+  dirtyBeamLabelsForSource,
   importAtl24Classifications,
   labelSelectionWithMode,
   labelsForAppMode,
@@ -38,6 +39,24 @@ test("accepting proposal preserves manual edits", () => {
     { source_row: 10, label: "bathy", label_source: "manual" },
     { source_row: 11, label: "surface", label_source: "auto" },
   ]);
+});
+
+test("reprocess save payload includes only dirty beams, not every viewed beam", () => {
+  const source = "Guam/ATL24_sample.h5";
+  const leftKey = `${source}\u0000gt1l`;
+  const rightKey = `${source}\u0000gt1r`;
+  const leftLabels = createDefaultLabels([1]);
+  leftLabels[0] = { source_row: 1, label: "bathy", label_source: "manual" };
+  const rightLabels = createDefaultLabels([2]);
+  const cache = new Map([
+    [leftKey, leftLabels],
+    [rightKey, rightLabels],
+  ]);
+
+  const payload = dirtyBeamLabelsForSource(source, cache, new Set([leftKey]));
+
+  assert.deepEqual(payload, { gt1l: leftLabels });
+  assert.notEqual(payload.gt1l, leftLabels);
 });
 
 test("proposal residual no label can be accepted as auto", () => {

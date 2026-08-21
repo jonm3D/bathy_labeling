@@ -27,8 +27,9 @@ original_name_gt1l_manual.h5
 original_name_gt1r_manual.h5
 ```
 
-Each saved file is copied from the original ATL24 file, then only the selected
-beam's `class_ph` values are rewritten:
+Each saved file retains the original ATL24 file metadata and ancillary groups,
+but contains only the beam named in the output filename. That beam's `class_ph`
+values are rewritten:
 
 - `surface` -> `41`
 - `bathy` -> `40`

@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
 import h5py
 import numpy as np
+import pytest
 
 from bathy_labeler.backend.reprocess import (
     LABEL_TO_CLASS_PH,
     ReprocessSession,
+    SOURCE_MTIME_ATTR,
+    SOURCE_SIZE_ATTR,
     _manual_output_has_valid_class_ph,
 )
 
@@ -39,8 +43,16 @@ def write_manual_output(
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_path, output_path)
+    source_stat = source_path.stat()
     with h5py.File(output_path, "r+") as h5:
+        for other_beam in ("gt1l", "gt1r"):
+            if other_beam != beam and other_beam in h5:
+                del h5[other_beam]
         h5[beam]["class_ph"][:] = class_ph
+        h5.attrs["bathy_labeler_source"] = source_relative_path
+        h5.attrs[SOURCE_SIZE_ATTR] = source_stat.st_size
+        h5.attrs[SOURCE_MTIME_ATTR] = source_stat.st_mtime_ns
+        h5[beam].attrs["bathy_labeler_cleaned_beam"] = beam
     return output_path
 
 
@@ -131,6 +143,80 @@ def test_sources_payload_marks_invalid_manual_output_without_counting_complete(
         "gt1l": "invalid",
         "gt1r": "unclassified",
     }
+
+
+def test_manual_output_is_invalid_after_source_file_changes(
+    tmp_path: Path,
+) -> None:
+    session = make_session(tmp_path)
+    write_manual_output(
+        session, "Guam/ATL24_sample.h5", "gt1l", np.zeros(150, dtype=np.int16)
+    )
+    assert session.input_dir is not None
+    source_path = session.input_dir / "Guam" / "ATL24_sample.h5"
+    before = source_path.stat()
+    with h5py.File(source_path, "r+") as h5:
+        h5["gt1l"]["lon_ph"][0] += 0.01
+    after = source_path.stat()
+    os.utime(
+        source_path,
+        ns=(after.st_atime_ns, max(before.st_mtime_ns, after.st_mtime_ns) + 1),
+    )
+
+    source = session.sources_payload()["sources"][0]
+
+    assert source["beam_statuses"]["gt1l"] == "invalid"
+    with pytest.raises(ValueError, match="does not match the current source"):
+        session.read_beam("Guam/ATL24_sample.h5", "gt1l")
+
+
+def test_manual_output_is_invalid_when_cleaned_beam_metadata_is_wrong(
+    tmp_path: Path,
+) -> None:
+    session = make_session(tmp_path)
+    manual_path = write_manual_output(
+        session, "Guam/ATL24_sample.h5", "gt1r", np.zeros(150, dtype=np.int16)
+    )
+    with h5py.File(manual_path, "r+") as h5:
+        h5["gt1r"].attrs["bathy_labeler_cleaned_beam"] = "gt1l"
+
+    source = session.sources_payload()["sources"][0]
+
+    assert source["beam_statuses"]["gt1r"] == "invalid"
+    with pytest.raises(ValueError, match="requested source and beam"):
+        session.read_beam("Guam/ATL24_sample.h5", "gt1r")
+
+
+def test_manual_output_is_invalid_when_it_contains_an_extra_beam(
+    tmp_path: Path,
+) -> None:
+    session = make_session(tmp_path)
+    manual_path = write_manual_output(
+        session, "Guam/ATL24_sample.h5", "gt1l", np.zeros(150, dtype=np.int16)
+    )
+    assert session.input_dir is not None
+    source_path = session.input_dir / "Guam" / "ATL24_sample.h5"
+    with h5py.File(source_path, "r") as source, h5py.File(manual_path, "r+") as manual:
+        source.copy("gt1r", manual)
+
+    source = session.sources_payload()["sources"][0]
+
+    assert source["beam_statuses"]["gt1l"] == "invalid"
+
+
+def test_malformed_beam_does_not_hide_other_valid_beams(tmp_path: Path) -> None:
+    session = make_session(tmp_path)
+    assert session.input_dir is not None
+    source_path = session.input_dir / "Guam" / "ATL24_sample.h5"
+    with h5py.File(source_path, "r+") as h5:
+        del h5["gt1r"]["night_flag"]
+        h5["gt1r"].create_dataset("night_flag", data=np.zeros(1, dtype=np.int8))
+
+    session.configure(session.input_dir, session.output_dir)
+    sources = session.sources_payload()["sources"]
+
+    assert len(sources) == 1
+    assert sources[0]["beams"] == ["gt1l"]
 
 
 def test_full_beam_payload_uses_original_atl24_classifications(
@@ -275,11 +361,17 @@ def test_save_rewrites_only_target_beam_classifications(
     assert result["outputs"][0]["beam"] == "gt1l"
     assert output_path.name == "ATL24_sample_gt1l_manual.h5"
     assert output_path.exists()
+    assert not output_path.with_name("ATL24_sample_gt1r_manual.h5").exists()
+    source_stat = (
+        tmp_path / "ATL24_inputs" / "Guam" / "ATL24_sample.h5"
+    ).stat()
     with h5py.File(
         tmp_path / "ATL24_inputs" / "Guam" / "ATL24_sample.h5", "r"
     ) as original:
         with h5py.File(output_path, "r") as manual:
             assert manual.attrs["rgt"] == original.attrs["rgt"]
+            assert manual.attrs[SOURCE_SIZE_ATTR] == source_stat.st_size
+            assert manual.attrs[SOURCE_MTIME_ATTR] == source_stat.st_mtime_ns
             assert manual["gt1l"]["class_ph"][:5].tolist() == [
                 40,
                 0,
@@ -287,22 +379,29 @@ def test_save_rewrites_only_target_beam_classifications(
                 41,
                 41,
             ]
-            assert (
-                manual["gt1r"]["class_ph"][:].tolist()
-                == original["gt1r"]["class_ph"][:].tolist()
-            )
+            assert "gt1r" not in manual
             assert manual["gt1l"]["confidence"][:].tolist() == [1.0] * 150
             assert (
                 manual["gt1l"]["low_confidence_flag"][:].tolist() == [0] * 150
             )
-            assert (
-                manual["gt1r"]["confidence"][:].tolist()
-                == original["gt1r"]["confidence"][:].tolist()
-            )
-            assert (
-                manual["gt1r"]["low_confidence_flag"][:].tolist()
-                == original["gt1r"]["low_confidence_flag"][:].tolist()
-            )
+
+
+def test_save_rejects_incomplete_or_duplicate_beam_labels(tmp_path: Path) -> None:
+    session = make_session(tmp_path)
+    payload = session.read_beam("Guam/ATL24_sample.h5", "gt1l")
+    labels = [dict(row) for row in payload["labels"]]
+
+    with pytest.raises(ValueError, match="complete beam"):
+        session.save_source("Guam/ATL24_sample.h5", {"gt1l": labels[:-1]})
+
+    labels[-1] = dict(labels[0])
+    with pytest.raises(ValueError, match="Duplicate label row"):
+        session.save_source("Guam/ATL24_sample.h5", {"gt1l": labels})
+
+    assert session.output_dir is not None
+    assert not (
+        session.output_dir / "Guam" / "ATL24_sample_gt1l_manual.h5"
+    ).exists()
 
 
 def test_save_archives_existing_manual_output_before_replacing(
@@ -386,21 +485,12 @@ def test_save_multiple_beams_creates_one_manual_h5_per_beam(
     assert sorted(outputs) == ["gt1l", "gt1r"]
     assert outputs["gt1l"].name == "ATL24_sample_gt1l_manual.h5"
     assert outputs["gt1r"].name == "ATL24_sample_gt1r_manual.h5"
-    with h5py.File(
-        tmp_path / "ATL24_inputs" / "Guam" / "ATL24_sample.h5", "r"
-    ) as original:
-        with h5py.File(outputs["gt1l"], "r") as gt1l_manual:
-            assert gt1l_manual["gt1l"]["class_ph"][0] == 40
-            assert (
-                gt1l_manual["gt1r"]["class_ph"][:].tolist()
-                == original["gt1r"]["class_ph"][:].tolist()
-            )
-        with h5py.File(outputs["gt1r"], "r") as gt1r_manual:
-            assert (
-                gt1r_manual["gt1l"]["class_ph"][:].tolist()
-                == original["gt1l"]["class_ph"][:].tolist()
-            )
-            assert gt1r_manual["gt1r"]["class_ph"][0] == 0
+    with h5py.File(outputs["gt1l"], "r") as gt1l_manual:
+        assert gt1l_manual["gt1l"]["class_ph"][0] == 40
+        assert "gt1r" not in gt1l_manual
+    with h5py.File(outputs["gt1r"], "r") as gt1r_manual:
+        assert "gt1l" not in gt1r_manual
+        assert gt1r_manual["gt1r"]["class_ph"][0] == 0
 
 
 def test_label_to_class_mapping_matches_atl24_codes() -> None:

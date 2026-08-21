@@ -1,4 +1,5 @@
 import type { SegmentPayload } from "./types.js";
+import { unwrapLongitude } from "./mapTrack.js";
 
 export type DistanceRange = [number, number];
 export type LngLatTuple = [number, number];
@@ -9,6 +10,7 @@ export interface MapSyncView {
   end: LngLatTuple;
   center: LngLatTuple;
   bearing: number;
+  profileReversed: boolean;
 }
 
 export interface ScreenSample {
@@ -65,12 +67,14 @@ export function computeMapSyncView(
     return null;
   }
 
+  const horizontal = computeHorizontalBearing(start, end);
   return {
     rangeKm,
     start,
     end,
     center: [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2],
-    bearing: computeHorizontalBearing(start, end),
+    bearing: horizontal.bearing,
+    profileReversed: horizontal.profileReversed,
   };
 }
 
@@ -159,7 +163,13 @@ function buildSamples(payload: SegmentPayload): SyncSample[] {
       samples.push({ distanceKm, lon, lat });
     }
   }
-  return samples.sort((a, b) => a.distanceKm - b.distanceKm);
+  const sorted = samples.sort((a, b) => a.distanceKm - b.distanceKm);
+  let previousLon: number | null = null;
+  for (const sample of sorted) {
+    sample.lon = unwrapLongitude(sample.lon, previousLon);
+    previousLon = sample.lon;
+  }
+  return sorted;
 }
 
 function normalizeRange(requestedRange: DistanceRange, fullRange: DistanceRange): DistanceRange {
@@ -218,13 +228,29 @@ function interpolateBetweenSamples(start: SyncSample, end: SyncSample, distanceK
   return [start.lon + (end.lon - start.lon) * fraction, start.lat + (end.lat - start.lat) * fraction];
 }
 
-function computeHorizontalBearing(start: LngLatTuple, end: LngLatTuple): number {
+interface HorizontalBearing {
+  bearing: number;
+  profileReversed: boolean;
+}
+
+function computeHorizontalBearing(start: LngLatTuple, end: LngLatTuple): HorizontalBearing {
   const startProjected = projectMercator(start);
   const endProjected = projectMercator(end);
   const dx = endProjected[0] - startProjected[0];
   const dy = endProjected[1] - startProjected[1];
   const azimuth = radiansToDegrees(Math.atan2(dx, dy));
-  return normalizeBearing(azimuth - 90);
+  return canonicalizeHorizontalBearing(azimuth - 90);
+}
+
+function canonicalizeHorizontalBearing(bearing: number): HorizontalBearing {
+  const normalized = normalizeBearing(bearing);
+  if (normalized > 90) {
+    return { bearing: normalized - 180, profileReversed: true };
+  }
+  if (normalized < -90) {
+    return { bearing: normalized + 180, profileReversed: true };
+  }
+  return { bearing: normalized, profileReversed: false };
 }
 
 function projectMercator([lon, lat]: LngLatTuple): [number, number] {

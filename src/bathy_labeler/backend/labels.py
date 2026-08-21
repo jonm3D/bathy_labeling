@@ -83,6 +83,8 @@ class LabelSidecarStore:
             return "stale"
         if len(sidecar.rows) != photons.count:
             return "stale"
+        if not _rows_match_photons(sidecar.rows, photons):
+            return "stale"
         return "complete"
 
     def save(
@@ -123,6 +125,25 @@ def row_key_checksum(photons: PhotonTable) -> str:
     for source_row, index_ph in zip(photons.source_row, photons.index_ph, strict=True):
         digest.update(f"{int(source_row)}:{int(index_ph)}\n".encode("utf-8"))
     return digest.hexdigest()
+
+
+def _rows_match_photons(rows: list[dict[str, Any]], photons: PhotonTable) -> bool:
+    expected = dict(zip(photons.source_row, photons.index_ph, strict=True))
+    observed: dict[int, int] = {}
+    try:
+        for row in rows:
+            source_row = int(row["source_row"])
+            index_ph = int(row["index_ph"])
+            if source_row in observed:
+                return False
+            if str(row["label"]) not in FINAL_LABELS:
+                return False
+            if str(row["label_source"]) not in LABEL_SOURCES:
+                return False
+            observed[source_row] = index_ph
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+    return observed == expected
 
 
 def _build_csv_rows(photons: PhotonTable, labels: list[dict[str, Any]]) -> list[dict[str, Any]]:

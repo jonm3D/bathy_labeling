@@ -120,3 +120,20 @@ def test_scalar_spacecraft_orientation_dataset_is_supported(tmp_path: Path):
 
     assert len(store.segments) == 4
     assert store.segments[0].beam_strength == "weak"
+
+
+def test_invalid_beam_is_warned_and_valid_beam_remains_available(tmp_path: Path):
+    source_root = tmp_path / "sources"
+    project_root = tmp_path / "project"
+    source_path = source_root / "ATL24_partial.h5"
+    write_atl24_like_file(source_path)
+    with h5py.File(source_path, "r+") as h5:
+        del h5["gt1r"]["night_flag"]
+        h5["gt1r"].create_dataset("night_flag", data=np.zeros(1, dtype=np.int8))
+
+    store = Atl24Store.from_folder(source_root, project_root)
+
+    assert {segment.beam for segment in store.segments} == {"gt1l"}
+    assert len(store.warnings) == 1
+    assert store.warnings[0].beam == "gt1r"
+    assert "lengths do not match" in store.warnings[0].message

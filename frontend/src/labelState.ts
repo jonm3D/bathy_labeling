@@ -63,6 +63,22 @@ export function acceptProposal(currentLabels: LabelRow[], proposalRows: LabelRow
   });
 }
 
+export function dirtyBeamLabelsForSource(
+  source: string,
+  labelCache: ReadonlyMap<string, LabelRow[]>,
+  dirtySelections: ReadonlySet<string>,
+): Record<string, LabelRow[]> {
+  const labelsByBeam: Record<string, LabelRow[]> = {};
+  for (const key of dirtySelections) {
+    const [cachedSource, cachedBeam] = key.split("\u0000");
+    const labels = labelCache.get(key);
+    if (cachedSource === source && cachedBeam && labels) {
+      labelsByBeam[cachedBeam] = labels.map((row) => ({ ...row }));
+    }
+  }
+  return labelsByBeam;
+}
+
 export function importAtl24Classifications(
   currentLabels: LabelRow[],
   atl24ClassPh: Array<number | null | undefined>,

@@ -4,6 +4,7 @@ import "./styles.css";
 import {
   acceptProposal,
   createDefaultLabels,
+  dirtyBeamLabelsForSource,
   labelSelectionWithMode,
   labelsForAppMode,
   toggleLabelMode,
@@ -146,14 +147,17 @@ let currentBeam: string | null = null;
 let selectedReprocessSource: string | null = null;
 let fullProfileRange: DistanceRange | null = null;
 let currentProfileRange: DistanceRange | null = null;
+let profileXReversed = false;
 let restoreCameraState: MapCameraState | null = null;
 let removeMapCameraListener: (() => void) | null = null;
 let ignoreNextMapCameraChange = false;
+let ignoreMapCameraChangeToken = 0;
 let ignoreProfileRelayout = false;
 const reprocessLabelCache = new Map<string, LabelRow[]>();
 let outputPathWasEdited = false;
 let datasetEditing = true;
 let datasetLoading = false;
+let saveInProgress = false;
 let labelHistory: LabelHistory = labelHistorySnapshot([]);
 const labelBaselines = new Map<string, LabelRow[]>();
 const dirtySelections = new Set<string>();
@@ -260,7 +264,17 @@ resetAtl24.addEventListener("click", async () => {
   if (!window.confirm("Reset this beam to the original ATL24 labels?")) {
     return;
   }
-  const reset = await resetReprocessBeam(currentSource, currentBeam);
+  const source = currentSource;
+  const beam = currentBeam;
+  const labelsBeforeRequest = cloneLabels(currentLabels);
+  const reset = await resetReprocessBeam(source, beam);
+  if (
+    currentSource !== source ||
+    currentBeam !== beam ||
+    !labelsEqual(currentLabels, labelsBeforeRequest)
+  ) {
+    return;
+  }
   recordLabelHistory(reset.rows);
   currentLabels = reset.rows;
   selectedRows = new Set();
@@ -390,6 +404,9 @@ async function initializeReprocessMode(manifest: ManifestPayload): Promise<void>
 }
 
 async function configureAndLoadReprocessSession(): Promise<void> {
+  if (saveInProgress) {
+    return;
+  }
   const draft = evaluateDatasetDraft(inputDir.value, outputDir.value, demPath.value);
   if (!draft.canLoad) {
     setDatasetStatus(draft.message);
@@ -577,9 +594,19 @@ async function runReprocessProposal(): Promise<void> {
   if (!currentSource || !currentBeam) {
     return;
   }
+  const source = currentSource;
+  const beam = currentBeam;
   setStatus("Building label suggestion");
+  const labelsBeforeRequest = cloneLabels(currentLabels);
   const seeds = currentLabels.filter((row) => row.label_source === "manual");
-  const proposal = await requestReprocessProposal(currentSource, currentBeam, seeds);
+  const proposal = await requestReprocessProposal(source, beam, seeds);
+  if (
+    currentSource !== source ||
+    currentBeam !== beam ||
+    !labelsEqual(currentLabels, labelsBeforeRequest)
+  ) {
+    return;
+  }
   const nextLabels = acceptProposal(currentLabels, proposal.rows);
   recordLabelHistory(nextLabels);
   currentLabels = nextLabels;
@@ -594,20 +621,23 @@ async function saveCurrentReprocessSource(): Promise<void> {
   if (!currentSource || !currentBeam) {
     return;
   }
+  const source = currentSource;
   cacheCurrentReprocessLabels();
+  const labelsByBeam = dirtyBeamLabelsForSource(source, reprocessLabelCache, dirtySelections);
   setStatus("Saving H5");
-  const saved = await saveReprocessSource(currentSource, beamLabelsForSource(currentSource));
+  const saved = await saveReprocessSource(source, labelsByBeam);
   applyReprocessSourceStatus(saved.source_status);
-  markReprocessSourceSaved(currentSource);
-  setStatus(reprocessSaveStatusText(saved));
-  await rerender();
+  markReprocessSourceSaved(source, labelsByBeam);
+  if (currentSource === source) {
+    setStatus(reprocessSaveStatusText(saved));
+    await rerender();
+  }
 }
 
 function applyReprocessSourceStatus(source: ReprocessSource): void {
   reprocessSources = reprocessSources.map((candidate) =>
     candidate.source_relative_path === source.source_relative_path ? source : candidate,
   );
-  selectedReprocessSource = source.source_relative_path;
   renderReprocessSourceList();
 }
 
@@ -615,17 +645,6 @@ function cacheCurrentReprocessLabels(): void {
   if (currentSource && currentBeam) {
     reprocessLabelCache.set(cacheKey(currentSource, currentBeam), cloneLabels(currentLabels));
   }
-}
-
-function beamLabelsForSource(source: string): Record<string, LabelRow[]> {
-  const labelsByBeam: Record<string, LabelRow[]> = {};
-  for (const [key, labels] of reprocessLabelCache.entries()) {
-    const [cachedSource, cachedBeam] = key.split("\u0000");
-    if (cachedSource === source && cachedBeam) {
-      labelsByBeam[cachedBeam] = cloneLabels(labels);
-    }
-  }
-  return labelsByBeam;
 }
 
 async function initializeTrainingMode(): Promise<void> {
@@ -726,9 +745,17 @@ async function runTrainingProposal(): Promise<void> {
   if (!currentPayload) {
     return;
   }
+  const segmentId = currentPayload.segment.segment_id;
   setStatus("Running proposal");
+  const labelsBeforeRequest = cloneLabels(currentLabels);
   const seeds = currentLabels.filter((row) => row.label_source === "manual");
-  const proposal = await requestProposal(currentPayload.segment.segment_id, seeds);
+  const proposal = await requestProposal(segmentId, seeds);
+  if (
+    currentSegmentId !== segmentId ||
+    !labelsEqual(currentLabels, labelsBeforeRequest)
+  ) {
+    return;
+  }
   const nextLabels = acceptProposal(currentLabels, proposal.rows);
   recordLabelHistory(nextLabels);
   currentLabels = nextLabels;
@@ -742,12 +769,26 @@ async function saveCurrentTrainingSegment(): Promise<void> {
   if (!currentSegmentId) {
     return;
   }
+  const segmentId = currentSegmentId;
+  const labels = cloneLabels(currentLabels);
   setStatus("Saving");
-  const saved = await saveLabels(currentSegmentId, currentLabels);
+  const saved = await saveLabels(segmentId, labels);
+  if (currentSegmentId !== segmentId) {
+    return;
+  }
+  const key = currentSelectionKey();
+  if (key) {
+    labelBaselines.set(key, cloneLabels(saved.rows));
+  }
+  if (!labelsEqual(currentLabels, labels)) {
+    updateDirtyStateForCurrentSelection();
+    setStatus("Saved earlier changes; newer changes remain unsaved");
+    return;
+  }
   currentLabels = saved.rows;
   markCurrentSelectionSaved();
   setStatus("Saved");
-  await loadSegments(currentSegmentId);
+  await loadSegments(segmentId);
 }
 
 async function rerender(): Promise<void> {
@@ -760,7 +801,10 @@ async function rerender(): Promise<void> {
   await renderProfile(profile, currentPayload, currentLabels, selectedRows, settings, activeDemSample(), (rows) => {
     void handleProfileSelection(rows);
   }, handleProfileRelayout);
-  currentProfileRange = getProfileXRange(profile) ?? currentProfileRange ?? fullProfileRange;
+  const renderedRange = getProfileXRange(profile);
+  currentProfileRange = renderedRange
+    ? normalizeDistanceRange(renderedRange)
+    : currentProfileRange ?? fullProfileRange;
 }
 
 async function loadDemAndRerender(): Promise<void> {
@@ -780,12 +824,22 @@ async function loadDemForCurrentBeam(): Promise<string | null> {
   if (currentDemKey === key && currentDemSample) {
     return `DEM sampled: ${currentDemSample.dem.valid_count.toLocaleString()}/${currentDemSample.dem.sample_count.toLocaleString()}`;
   }
+  const source = currentSource;
+  const beam = currentBeam;
+  const path = demPath.value.trim();
   setStatus("Sampling DEM");
   try {
-    currentDemSample = await requestReprocessDemSample(currentSource, currentBeam, demPath.value.trim());
+    const sample = await requestReprocessDemSample(source, beam, path);
+    if (currentDemCacheKey() !== key) {
+      return null;
+    }
+    currentDemSample = sample;
     currentDemKey = key;
     return `DEM sampled: ${currentDemSample.dem.valid_count.toLocaleString()}/${currentDemSample.dem.sample_count.toLocaleString()}`;
   } catch (error) {
+    if (currentDemCacheKey() !== key) {
+      return null;
+    }
     currentDemSample = null;
     currentDemKey = null;
     return `DEM unavailable: ${errorMessage(error)}`;
@@ -840,12 +894,13 @@ async function clearCurrentSelection(): Promise<void> {
 function setActiveProfileRange(payload: SegmentPayload | null): void {
   fullProfileRange = payload ? getSegmentDistanceRange(payload) : null;
   currentProfileRange = fullProfileRange;
+  profileXReversed = false;
 }
 
 function beginPayloadSwitch(): number {
   const token = payloadSwitchGuard.begin();
   ignoreProfileRelayout = true;
-  ignoreNextMapCameraChange = true;
+  suppressProgrammaticMapCameraChange(true);
   return token;
 }
 
@@ -872,11 +927,30 @@ function syncMapToProfile(animated: boolean): void {
   }
 
   currentProfileRange = syncView.rangeKm;
-  ignoreNextMapCameraChange = true;
+  updateProfileXOrientation(syncView.profileReversed);
+  suppressProgrammaticMapCameraChange(animated);
   mapView.syncToSegmentRange(syncView, animated);
+}
+
+function updateProfileXOrientation(nextReversed: boolean): void {
+  if (profileXReversed === nextReversed) {
+    return;
+  }
+  profileXReversed = nextReversed;
+  if (currentProfileRange) {
+    void setProfileXRangeIgnoringRelayout(currentProfileRange);
+  }
+}
+
+function suppressProgrammaticMapCameraChange(animated: boolean): void {
+  const token = ignoreMapCameraChangeToken + 1;
+  ignoreMapCameraChangeToken = token;
+  ignoreNextMapCameraChange = true;
   window.setTimeout(
     () => {
-      ignoreNextMapCameraChange = false;
+      if (ignoreMapCameraChangeToken === token) {
+        ignoreNextMapCameraChange = false;
+      }
     },
     animated ? 900 : 0,
   );
@@ -890,7 +964,7 @@ function handleProfileRelayout(update: Record<string, unknown>): void {
   if (nextRange === null) {
     return;
   }
-  currentProfileRange = nextRange;
+  currentProfileRange = normalizeDistanceRange(nextRange);
   syncMapToProfile(false);
 }
 
@@ -904,6 +978,7 @@ async function syncProfileToMapView(): Promise<void> {
   }
 
   if (ignoreNextMapCameraChange) {
+    ignoreMapCameraChangeToken += 1;
     ignoreNextMapCameraChange = false;
     return;
   }
@@ -913,10 +988,14 @@ async function syncProfileToMapView(): Promise<void> {
     return;
   }
 
-  currentProfileRange = nextRange;
+  currentProfileRange = normalizeDistanceRange(nextRange);
+  await setProfileXRangeIgnoringRelayout(currentProfileRange);
+}
+
+async function setProfileXRangeIgnoringRelayout(range: DistanceRange): Promise<void> {
   ignoreProfileRelayout = true;
   try {
-    await setProfileXRange(profile, nextRange);
+    await setProfileXRange(profile, getProfileDisplayRange(range));
   } finally {
     window.setTimeout(() => {
       ignoreProfileRelayout = false;
@@ -928,7 +1007,21 @@ function rangesAreClose(left: DistanceRange, right: DistanceRange | null): boole
   if (right === null) {
     return false;
   }
-  return Math.abs(left[0] - right[0]) < 0.001 && Math.abs(left[1] - right[1]) < 0.001;
+  const normalizedLeft = normalizeDistanceRange(left);
+  const normalizedRight = normalizeDistanceRange(right);
+  return (
+    Math.abs(normalizedLeft[0] - normalizedRight[0]) < 0.001 &&
+    Math.abs(normalizedLeft[1] - normalizedRight[1]) < 0.001
+  );
+}
+
+function normalizeDistanceRange(range: DistanceRange): DistanceRange {
+  return range[0] <= range[1] ? range : [range[1], range[0]];
+}
+
+function getProfileDisplayRange(range: DistanceRange): DistanceRange {
+  const normalized = normalizeDistanceRange(range);
+  return profileXReversed ? [normalized[1], normalized[0]] : normalized;
 }
 
 function enableMapSync(): void {
@@ -947,7 +1040,13 @@ function disableMapSync(): void {
   removeMapCameraListener?.();
   removeMapCameraListener = null;
   ignoreNextMapCameraChange = false;
+  ignoreMapCameraChangeToken += 1;
   ignoreProfileRelayout = false;
+
+  if (profileXReversed && currentProfileRange) {
+    profileXReversed = false;
+    void setProfileXRangeIgnoringRelayout(currentProfileRange);
+  }
 
   if (restoreCameraState !== null) {
     mapView.restoreCameraState(restoreCameraState, true);
@@ -1045,13 +1144,27 @@ async function handleKeyboardShortcut(event: KeyboardEvent): Promise<void> {
 }
 
 async function saveCurrentLabels(): Promise<void> {
-  if (!currentPayload) {
+  if (
+    !currentPayload ||
+    saveInProgress ||
+    datasetLoading ||
+    (appMode === "reprocess" && datasetEditing)
+  ) {
     return;
   }
-  if (appMode === "reprocess") {
-    await saveCurrentReprocessSource();
-  } else {
-    await saveCurrentTrainingSegment();
+  saveInProgress = true;
+  updateDatasetControls();
+  try {
+    if (appMode === "reprocess") {
+      await saveCurrentReprocessSource();
+    } else {
+      await saveCurrentTrainingSegment();
+    }
+  } catch (error) {
+    setStatus(`Save failed: ${errorMessage(error)}`);
+  } finally {
+    saveInProgress = false;
+    updateDatasetControls();
   }
 }
 
@@ -1088,13 +1201,23 @@ async function redoLabelChange(): Promise<void> {
 function updateSelectionControls(): void {
   const hasPayload = currentPayload !== null;
   const saveable = hasSaveableChanges();
+  const datasetBlocksSave = appMode === "reprocess" && datasetEditing;
   emptyWorkflow.hidden = hasPayload;
   labelingControls.hidden = !hasPayload;
   actionControls.hidden = !hasPayload;
   clearSelectionButton.disabled = selectedRows.size === 0;
   runProposal.disabled = !hasPayload;
-  saveLabelsButton.disabled = !hasPayload || !saveable;
-  saveLabelsButton.classList.toggle("is-primary", hasPayload && saveable && !datasetEditing);
+  saveLabelsButton.disabled =
+    !hasPayload || !saveable || saveInProgress || datasetLoading || datasetBlocksSave;
+  saveLabelsButton.textContent = saveInProgress
+    ? "Saving..."
+    : appMode === "reprocess"
+      ? "Save cleaned H5"
+      : "Done";
+  saveLabelsButton.classList.toggle(
+    "is-primary",
+    hasPayload && saveable && !saveInProgress && !datasetLoading && !datasetBlocksSave,
+  );
   undoLabelsButton.disabled = !hasPayload || !labelHistoryCanUndo(labelHistory);
   redoLabelsButton.disabled = !hasPayload || !labelHistoryCanRedo(labelHistory);
   resetAtl24.disabled = appMode !== "reprocess" || !currentSource || !currentBeam;
@@ -1108,16 +1231,17 @@ function updateSelectionControls(): void {
 
 function updateDatasetControls(): void {
   const draft = evaluateDatasetDraft(inputDir.value, outputDir.value, demPath.value);
+  const busy = datasetLoading || saveInProgress;
   datasetFields.hidden = !datasetEditing;
   datasetSummary.hidden = datasetEditing || !draft.inputPath;
   datasetSummaryTextElement.textContent = datasetSummaryText(draft.inputPath, draft.outputPath, draft.demPath);
-  loadSessionButton.disabled = datasetLoading || !draft.canLoad;
+  loadSessionButton.disabled = busy || !draft.canLoad;
   loadSessionButton.textContent = datasetLoading ? "Loading..." : "Load dataset";
   loadSessionButton.classList.toggle("is-primary", datasetEditing);
-  editDatasetButton.disabled = datasetLoading;
-  chooseInputDirButton.disabled = datasetLoading;
-  suggestOutputDirButton.disabled = datasetLoading || !draft.suggestedOutputPath;
-  chooseDemPathButton.disabled = datasetLoading;
+  editDatasetButton.disabled = busy;
+  chooseInputDirButton.disabled = busy;
+  suggestOutputDirButton.disabled = busy || !draft.suggestedOutputPath;
+  chooseDemPathButton.disabled = busy;
   updatePathError(inputDir, inputDirError, draft.fieldErrors.input);
   updatePathError(outputDir, outputDirError, draft.fieldErrors.output);
   updatePathError(demPath, demPathError, draft.fieldErrors.dem);
@@ -1276,15 +1400,23 @@ function markCurrentSelectionSaved(): void {
   labelHistory = labelHistorySnapshot(currentLabels);
 }
 
-function markReprocessSourceSaved(source: string): void {
-  for (const [key, labels] of reprocessLabelCache.entries()) {
-    const [cachedSource] = key.split("\u0000");
-    if (cachedSource === source) {
-      labelBaselines.set(key, cloneLabels(labels));
+function markReprocessSourceSaved(source: string, savedLabelsByBeam: Record<string, LabelRow[]>): void {
+  for (const [beam, savedLabels] of Object.entries(savedLabelsByBeam)) {
+    const key = cacheKey(source, beam);
+    labelBaselines.set(key, cloneLabels(savedLabels));
+    const cachedLabels = reprocessLabelCache.get(key);
+    if (cachedLabels && labelsEqual(cachedLabels, savedLabels)) {
       dirtySelections.delete(key);
+    } else {
+      dirtySelections.add(key);
     }
   }
-  markCurrentSelectionSaved();
+  if (currentSource === source && currentBeam) {
+    const savedLabels = savedLabelsByBeam[currentBeam];
+    if (savedLabels && labelsEqual(currentLabels, savedLabels)) {
+      labelHistory = labelHistorySnapshot(currentLabels);
+    }
+  }
 }
 
 function labelsEqual(left: LabelRow[], right: LabelRow[]): boolean {

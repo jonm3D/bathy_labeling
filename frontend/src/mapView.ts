@@ -6,7 +6,7 @@ import {
   computeVisibleDistanceRangeFromScreen,
   getSegmentDistanceRange,
 } from "./mapSync.js";
-import { boundsForCoordinates } from "./mapTrack.js";
+import { boundsForCoordinates, unwrapLongitude, unwrapTrackCoordinates } from "./mapTrack.js";
 import type { DistanceRange, MapSyncView, ScreenSample } from "./mapSync.js";
 import type { SegmentPayload } from "./types.js";
 
@@ -72,6 +72,7 @@ export function createMap(container: HTMLElement): LabelerMap {
 
   function projectSegmentSamples(payload: SegmentPayload): ScreenSample[] {
     const samples: ScreenSample[] = [];
+    let previousLon: number | null = null;
     const count = Math.min(payload.context.x_atc_m.length, payload.context.lon.length, payload.context.lat.length);
     for (let index = 0; index < count; index += 1) {
       const distanceKm = payload.context.x_atc_m[index] / 1000;
@@ -80,7 +81,9 @@ export function createMap(container: HTMLElement): LabelerMap {
       if (!Number.isFinite(distanceKm) || !Number.isFinite(lon) || !Number.isFinite(lat)) {
         continue;
       }
-      const point = map.project([lon, lat]);
+      const unwrappedLon = unwrapLongitude(lon, previousLon);
+      previousLon = unwrappedLon;
+      const point = map.project([unwrappedLon, lat]);
       samples.push({ distanceKm, x: point.x, y: point.y });
     }
     return samples;
@@ -181,7 +184,9 @@ function ensureLayers(map: maplibregl.Map): void {
 }
 
 function renderPayload(map: maplibregl.Map, payload: SegmentPayload, fitSegment: boolean): void {
-  const coordinates = payload.context.lon.map((lon, index) => [lon, payload.context.lat[index]]);
+  const coordinates = unwrapTrackCoordinates(
+    payload.context.lon.map((lon, index) => [lon, payload.context.lat[index]]),
+  );
   const source = map.getSource("segment-track") as GeoJSONSource | undefined;
   source?.setData({
     type: "Feature",
