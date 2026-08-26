@@ -8,11 +8,17 @@ import numpy as np
 from bathy_labeler.backend.hdf5_store import Atl24Store
 
 
-def write_atl24_like_file(path: Path, sc_orient: int = 1, scalar_orient: bool = False) -> None:
+def write_atl24_like_file(
+    path: Path, sc_orient: int = 1, scalar_orient: bool = False
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with h5py.File(path, "w") as h5:
         orbit_info = h5.create_group("orbit_info")
-        orient_data = np.asarray(sc_orient, dtype=np.int8) if scalar_orient else np.asarray([sc_orient], dtype=np.int8)
+        orient_data = (
+            np.asarray(sc_orient, dtype=np.int8)
+            if scalar_orient
+            else np.asarray([sc_orient], dtype=np.int8)
+        )
         orbit_info.create_dataset("sc_orient", data=orient_data)
         h5.attrs["rgt"] = "1234"
         h5.attrs["cycle"] = "07"
@@ -21,7 +27,11 @@ def write_atl24_like_file(path: Path, sc_orient: int = 1, scalar_orient: bool = 
             group = h5.create_group(beam)
             count = 150
             x_atc = np.arange(count, dtype=float) * 100.0
-            lon = -144.8 + x_atc * 0.00001 + (0.001 if beam.endswith("r") else 0.0)
+            lon = (
+                -144.8
+                + x_atc * 0.00001
+                + (0.001 if beam.endswith("r") else 0.0)
+            )
             lat = 13.4 + x_atc * 0.000005
             ortho_h = np.linspace(1.5, -8.0, count)
             surface_h = np.full(count, 0.25)
@@ -40,15 +50,27 @@ def write_atl24_like_file(path: Path, sc_orient: int = 1, scalar_orient: bool = 
             group.create_dataset("index_ph", data=index_ph)
             group.create_dataset("class_ph", data=class_ph)
             group.create_dataset("night_flag", data=night_flag)
+            group.create_dataset(
+                "confidence", data=np.full(count, 0.5, dtype=np.float32)
+            )
+            group.create_dataset(
+                "low_confidence_flag", data=np.zeros(count, dtype=np.int8)
+            )
 
 
-def test_inventory_recursively_discovers_h5_files_and_generates_deterministic_segments(tmp_path: Path):
+def test_inventory_recursively_discovers_h5_files_and_generates_deterministic_segments(
+    tmp_path: Path,
+):
     source_root = tmp_path / "sources"
     project_root = tmp_path / "project"
     write_atl24_like_file(source_root / "Guam" / "ATL24_sample.h5")
 
-    first = Atl24Store.from_folder(source_root=source_root, project_root=project_root)
-    second = Atl24Store.from_folder(source_root=source_root, project_root=project_root)
+    first = Atl24Store.from_folder(
+        source_root=source_root, project_root=project_root
+    )
+    second = Atl24Store.from_folder(
+        source_root=source_root, project_root=project_root
+    )
 
     first_ids = [segment.segment_id for segment in first.segments]
     second_ids = [segment.segment_id for segment in second.segments]
@@ -69,7 +91,9 @@ def test_inventory_recursively_discovers_h5_files_and_generates_deterministic_se
     assert first_segment.beam_strength == "weak"
 
     right_segment = next(
-        segment for segment in first.segments if segment.beam == "gt1r" and segment.x_atc_start_m == 0
+        segment
+        for segment in first.segments
+        if segment.beam == "gt1r" and segment.x_atc_start_m == 0
     )
     assert right_segment.beam_strength == "strong"
 
@@ -78,7 +102,9 @@ def test_segment_payload_contains_assigned_rows_and_context(tmp_path: Path):
     source_root = tmp_path / "sources"
     project_root = tmp_path / "project"
     write_atl24_like_file(source_root / "Guam" / "ATL24_sample.h5")
-    store = Atl24Store.from_folder(source_root=source_root, project_root=project_root)
+    store = Atl24Store.from_folder(
+        source_root=source_root, project_root=project_root
+    )
 
     segment = store.segments[0]
     payload = store.read_segment(segment.segment_id)
@@ -104,7 +130,9 @@ def test_transition_orientation_is_rejected(tmp_path: Path):
     project_root = tmp_path / "project"
     write_atl24_like_file(source_root / "ATL24_transition.h5", sc_orient=2)
 
-    store = Atl24Store.from_folder(source_root=source_root, project_root=project_root)
+    store = Atl24Store.from_folder(
+        source_root=source_root, project_root=project_root
+    )
 
     assert store.segments == []
     assert len(store.warnings) == 1
@@ -114,15 +142,21 @@ def test_transition_orientation_is_rejected(tmp_path: Path):
 def test_scalar_spacecraft_orientation_dataset_is_supported(tmp_path: Path):
     source_root = tmp_path / "sources"
     project_root = tmp_path / "project"
-    write_atl24_like_file(source_root / "ATL24_scalar_orient.h5", sc_orient=1, scalar_orient=True)
+    write_atl24_like_file(
+        source_root / "ATL24_scalar_orient.h5", sc_orient=1, scalar_orient=True
+    )
 
-    store = Atl24Store.from_folder(source_root=source_root, project_root=project_root)
+    store = Atl24Store.from_folder(
+        source_root=source_root, project_root=project_root
+    )
 
     assert len(store.segments) == 4
     assert store.segments[0].beam_strength == "weak"
 
 
-def test_invalid_beam_is_warned_and_valid_beam_remains_available(tmp_path: Path):
+def test_invalid_beam_is_warned_and_valid_beam_remains_available(
+    tmp_path: Path,
+):
     source_root = tmp_path / "sources"
     project_root = tmp_path / "project"
     source_path = source_root / "ATL24_partial.h5"

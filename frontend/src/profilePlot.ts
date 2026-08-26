@@ -52,16 +52,15 @@ export async function renderProfile(
   const initialRanges = computeInitialRanges(payload);
   const fixedRanges = currentRanges ?? storedRanges ?? initialRanges;
   const demTrace = settings.showDem && demSample ? profileDemTracePoints(demSample) : null;
-
   const traces = [
     {
       type: "scattergl",
       mode: "markers",
       name: "Context",
+      showlegend: false,
       ...plotlySelectionVisibilityStyle(1),
       x: contextRows.map((row) => payload.context.x_atc_m[row.index] / 1000),
       y: contextRows.map((row) => payload.context.ortho_h_m[row.index]),
-      customdata: contextRows.map((row) => row.sourceRow),
       marker: {
         color: "rgba(88, 96, 110, 0.32)",
         size: Math.max(1, settings.pointSize - 1),
@@ -72,6 +71,7 @@ export async function renderProfile(
       type: "scattergl",
       mode: "markers",
       name: "Assigned",
+      showlegend: false,
       ...plotlySelectionVisibilityStyle(settings.pointOpacity),
       x: assignedRows.map((row) => payload.assigned.x_atc_m[row.index] / 1000),
       y: assignedRows.map((row) => payload.assigned.ortho_h_m[row.index]),
@@ -91,6 +91,7 @@ export async function renderProfile(
             type: "scattergl",
             mode: "lines+markers",
             name: "DEM",
+            showlegend: false,
             ...plotlySelectionVisibilityStyle(0.95),
             x: demTrace.xKm,
             y: demTrace.hM,
@@ -111,6 +112,7 @@ export async function renderProfile(
       type: "scattergl",
       mode: "markers",
       name: "Selected",
+      showlegend: false,
       ...plotlySelectionVisibilityStyle(0.92),
       x: selected.map((row) => payload.assigned.x_atc_m[row.index] / 1000),
       y: selected.map((row) => payload.assigned.ortho_h_m[row.index]),
@@ -128,6 +130,7 @@ export async function renderProfile(
       type: "scattergl",
       mode: "markers",
       name: "Manual seeds",
+      showlegend: false,
       ...plotlySelectionVisibilityStyle(0.95),
       x: manualSeeds.map((row) => payload.assigned.x_atc_m[row.index] / 1000),
       y: manualSeeds.map((row) => payload.assigned.ortho_h_m[row.index]),
@@ -160,7 +163,7 @@ export async function renderProfile(
         zeroline: false,
       },
       yaxis: {
-        title: { text: "ortho_h (m)" },
+        title: { text: payload.height_axis_label ?? "ortho_h (m)" },
         gridcolor: PLOT_GRID_COLOR,
         range: fixedRanges.y,
         zerolinecolor: PLOT_ZERO_LINE_COLOR,

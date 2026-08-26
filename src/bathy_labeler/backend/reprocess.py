@@ -1,15 +1,22 @@
 from __future__ import annotations
 
-import shutil
-import uuid
+import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
+import geopandas as gpd
 import h5py
 import numpy as np
 
+from bathy_labeler.backend.classified_output import (
+    build_classified_frame,
+    canonical_photon_id,
+    labeled_utc_now,
+    output_is_valid,
+    read_manual_classes,
+    write_classified_geopackage,
+)
 from bathy_labeler.backend.dem import sample_dem_along_track
 from bathy_labeler.backend.hdf5_store import (
     _beam_strength,
@@ -30,9 +37,6 @@ LABEL_TO_CLASS_PH: dict[FinalLabel, int] = {
     "bathy": 40,
     "no_label": 0,
 }
-
-SOURCE_SIZE_ATTR = "bathy_labeler_source_size_bytes"
-SOURCE_MTIME_ATTR = "bathy_labeler_source_modified_ns"
 
 BeamOutputStatus = Literal["complete", "unclassified", "invalid"]
 FileOutputStatus = Literal["complete", "partial", "unclassified", "invalid"]
@@ -284,24 +288,19 @@ class ReprocessSession:
     def _output_path(self, source_relative_path: str, beam: str) -> Path:
         if self.output_dir is None:
             raise ValueError("Output folder is required before saving")
+        source = self._source(source_relative_path)
+        with h5py.File(source.path, "r") as h5:
+            date, rgt, cycle, spot = _h5_track_identity(source.path, beam, h5)
         relative = Path(source_relative_path)
-        return (
-            self.output_dir
-            / relative.parent
-            / f"{relative.stem}_{beam}_manual.h5"
-        )
+        filename = f"{date}_rgt{rgt:04d}_cycle{cycle:03d}_spot{spot}.gpkg"
+        return self.output_dir / relative.parent / filename
 
     def _manual_output_path(
         self, source_relative_path: str, beam: str
     ) -> Path | None:
         if self.output_dir is None:
             return None
-        relative = Path(source_relative_path)
-        return (
-            self.output_dir
-            / relative.parent
-            / f"{relative.stem}_{beam}_manual.h5"
-        )
+        return self._output_path(source_relative_path, beam)
 
     def _source_payload(self, source: ReprocessSource) -> dict[str, object]:
         return source.to_dict(self._status_for_source(source))
@@ -318,13 +317,13 @@ class ReprocessSession:
                     continue
                 group = self._beam_group(h5, source.relative_path, beam)
                 expected_count = int(group["x_atc"].shape[0])
-                is_valid = _manual_output_has_valid_class_ph(
-                    output_path,
-                    source.relative_path,
-                    beam,
-                    expected_count,
-                    source_path=source.path,
+                date, rgt, cycle, spot = _h5_track_identity(
+                    source.path, beam, h5
                 )
+                expected_ids = _h5_photon_ids(
+                    date, rgt, cycle, spot, expected_count
+                )
+                is_valid = output_is_valid(output_path, expected_ids)
                 if not is_valid:
                     beam_statuses[beam] = "invalid"
                 else:
@@ -366,13 +365,17 @@ class ReprocessSession:
                 "atl24_original",
                 None,
             )
-        class_ph = _read_manual_class_ph(
-            manual_path,
-            source.relative_path,
-            beam,
-            expected_count=len(photons.source_row),
-            source_path=source.path,
+        with h5py.File(source.path, "r") as h5:
+            date, rgt, cycle, spot = _h5_track_identity(source.path, beam, h5)
+        expected_ids = _h5_photon_ids(
+            date, rgt, cycle, spot, len(photons.source_row)
         )
+        try:
+            class_ph = read_manual_classes(manual_path, expected_ids)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise ValueError(
+                f"Invalid classified GeoPackage: {manual_path}"
+            ) from exc
         return (
             labels_from_atl24_classes(photons.source_row, class_ph),
             "manual_output",
@@ -406,62 +409,22 @@ class ReprocessSession:
     ) -> tuple[dict[str, str], dict[str, str] | None]:
         output_path = self._output_path(source_relative_path, beam)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        backup_path = self._backup_existing_output(
-            output_path, source_relative_path, beam
-        )
-        tmp_path = _temporary_output_path(output_path)
-        try:
-            shutil.copy2(source.path, tmp_path)
-            _write_beam_class_values(
-                tmp_path=tmp_path,
-                source_relative_path=source_relative_path,
-                source_path=source.path,
-                beam=beam,
-                class_values=class_values,
-                beam_group=self._beam_group,
+        with h5py.File(source.path, "r") as h5:
+            group = self._beam_group(h5, source_relative_path, beam)
+            frame = _classified_h5_frame(
+                source.path,
+                beam,
+                h5,
+                group,
+                class_values,
+                time_labeled_utc=labeled_utc_now(),
             )
-            tmp_path.replace(output_path)
-        except Exception:
-            if tmp_path.exists():
-                tmp_path.unlink()
-            raise
+        backup_path = write_classified_geopackage(output_path, frame)
         output = {"beam": beam, "output_path": str(output_path)}
         backup = None
         if backup_path is not None:
             backup = {"beam": beam, "backup_path": str(backup_path)}
         return output, backup
-
-    def _backup_existing_output(
-        self,
-        output_path: Path,
-        source_relative_path: str,
-        beam: str,
-    ) -> Path | None:
-        if not output_path.exists():
-            return None
-        backup_path = self._backup_path(output_path, source_relative_path, beam)
-        backup_path.parent.mkdir(parents=True, exist_ok=False)
-        shutil.copy2(output_path, backup_path)
-        return backup_path
-
-    def _backup_path(
-        self,
-        output_path: Path,
-        source_relative_path: str,
-        beam: str,
-    ) -> Path:
-        if self.output_dir is None:
-            raise ValueError("Output folder is required before saving")
-        relative = Path(source_relative_path)
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        return (
-            self.output_dir
-            / ".bathy_labeler_backups"
-            / relative.parent
-            / f"{relative.stem}_{beam}_manual"
-            / timestamp
-            / output_path.name
-        )
 
 
 def source_label_for_relative_path(relative_path: str) -> str | None:
@@ -491,83 +454,6 @@ def label_from_class_ph(class_ph: int | None) -> FinalLabel:
     return "no_label"
 
 
-def _read_manual_class_ph(
-    manual_path: Path,
-    source_relative_path: str,
-    beam: str,
-    expected_count: int,
-    source_path: Path,
-) -> list[int | None]:
-    source_beam = f"{source_relative_path}/{beam}"
-    try:
-        with h5py.File(manual_path, "r") as h5:
-            if not _manual_output_matches_source(h5, source_path):
-                raise ValueError(
-                    "Manual output does not match the current source file for "
-                    f"{source_beam}: {manual_path}"
-                )
-            if not _manual_output_matches_target(
-                h5, source_relative_path, beam
-            ):
-                raise ValueError(
-                    "Manual output does not match the requested source and beam for "
-                    f"{source_beam}: {manual_path}"
-                )
-            if beam not in h5:
-                message = (
-                    "Manual output missing beam for "
-                    f"{source_beam}: {manual_path}"
-                )
-                raise ValueError(message)
-            group = h5[beam]
-            if "class_ph" not in group:
-                raise ValueError(
-                    f"Manual output missing class_ph for "
-                    f"{source_beam}: {manual_path}"
-                )
-            class_ph = np.asarray(group["class_ph"][:])
-    except OSError as exc:
-        raise ValueError(
-            f"Manual output is unreadable for {source_beam}: " f"{manual_path}"
-        ) from exc
-    if class_ph.shape != (expected_count,):
-        raise ValueError(
-            f"Manual output class_ph length mismatch for {source_beam}: "
-            f"expected shape ({expected_count},), found {class_ph.shape}"
-        )
-    return [
-        None if np.ma.is_masked(value) else int(value) for value in class_ph
-    ]
-
-
-def _manual_output_has_valid_class_ph(
-    manual_path: Path,
-    source_relative_path: str,
-    beam: str,
-    expected_count: int,
-    source_path: Path | None = None,
-) -> bool:
-    try:
-        with h5py.File(manual_path, "r") as h5:
-            if source_path is not None and not _manual_output_matches_source(
-                h5, source_path
-            ):
-                return False
-            if not _manual_output_matches_target(
-                h5, source_relative_path, beam
-            ):
-                return False
-            if beam not in h5:
-                return False
-            group = h5[beam]
-            if "class_ph" not in group:
-                return False
-            dataset = group["class_ph"]
-            return dataset.shape == (expected_count,)
-    except OSError:
-        return False
-
-
 def _valid_beams(path: Path) -> list[str]:
     try:
         with h5py.File(path, "r") as h5:
@@ -595,40 +481,105 @@ def _read_all_photons(group: h5py.Group) -> PhotonTable:
     return _read_photon_rows(group, np.arange(count, dtype=np.int64))
 
 
-def _temporary_output_path(output_path: Path) -> Path:
-    return output_path.with_name(f".{output_path.name}.{uuid.uuid4().hex}.tmp")
-
-
-def _write_beam_class_values(
-    tmp_path: Path,
-    source_relative_path: str,
+def _classified_h5_frame(
     source_path: Path,
     beam: str,
+    h5: h5py.File,
+    group: h5py.Group,
     class_values: np.ndarray,
-    beam_group: Callable[[h5py.File, str, str], h5py.Group],
-) -> None:
-    with h5py.File(tmp_path, "r+") as h5:
-        group = beam_group(h5, source_relative_path, beam)
-        for other_beam in BEAM_NAMES:
-            if other_beam != beam and other_beam in h5:
-                del h5[other_beam]
-        photon_count = int(group["x_atc"].shape[0])
-        if int(class_values.shape[0]) != photon_count:
-            raise ValueError(
-                f"class_ph length mismatch for {source_relative_path}/{beam}: "
-                f"expected {photon_count}, found {int(class_values.shape[0])}"
-            )
-        if "class_ph" not in group:
-            group.create_dataset("class_ph", data=class_values)
-        elif group["class_ph"].shape != class_values.shape:
-            del group["class_ph"]
-            group.create_dataset("class_ph", data=class_values)
-        else:
-            group["class_ph"][:] = class_values
-        _set_manual_confidence_values(group)
-        _set_cleaner_metadata(
-            h5, group, source_relative_path, source_path, beam
+    *,
+    time_labeled_utc: str,
+) -> gpd.GeoDataFrame:
+    count = int(group["x_atc"].shape[0])
+    if class_values.shape != (count,):
+        raise ValueError(
+            f"class_manual length mismatch: expected {count}, "
+            f"found {class_values.shape}"
         )
+    if "class_ph" not in group:
+        raise ValueError(
+            f"ATL24 source beam has no class_ph: {source_path}/{beam}"
+        )
+    data: dict[str, object] = {}
+    for name, item in group.items():
+        if not isinstance(item, h5py.Dataset) or item.shape != (count,):
+            continue
+        data[name] = np.asarray(item[:])
+    data["beam"] = np.full(count, beam, dtype=object)
+    source = gpd.GeoDataFrame(
+        data,
+        geometry=gpd.points_from_xy(data["lon_ph"], data["lat_ph"]),
+        crs="EPSG:4326",
+    )
+    date, rgt, cycle, spot = _h5_track_identity(source_path, beam, h5)
+    return build_classified_frame(
+        source,
+        acquisition_dates=[date] * count,
+        track_indices=list(range(count)),
+        rgt=rgt,
+        cycle=cycle,
+        spot=spot,
+        class_manual=class_values.tolist(),
+        time_labeled_utc=time_labeled_utc,
+    )
+
+
+def _h5_track_identity(
+    source_path: Path,
+    beam: str,
+    h5: h5py.File,
+) -> tuple[str, int, int, int]:
+    match = re.match(r"^ATL24_(\d{8})\d{6}_", source_path.name)
+    if match is None:
+        raise ValueError(
+            "ATL24 H5 filename must preserve its acquisition timestamp: "
+            f"{source_path.name}"
+        )
+    try:
+        rgt = int(h5.attrs["rgt"])
+        cycle = int(h5.attrs["cycle"])
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            f"ATL24 H5 requires integer root rgt and cycle attributes: {source_path}"
+        ) from exc
+    return match.group(1), rgt, cycle, _spot_number(beam, _read_sc_orient(h5))
+
+
+def _spot_number(beam: str, sc_orient: int) -> int:
+    backward = {
+        "gt1l": 1,
+        "gt1r": 2,
+        "gt2l": 3,
+        "gt2r": 4,
+        "gt3l": 5,
+        "gt3r": 6,
+    }
+    forward = {
+        "gt3r": 1,
+        "gt3l": 2,
+        "gt2r": 3,
+        "gt2l": 4,
+        "gt1r": 5,
+        "gt1l": 6,
+    }
+    if sc_orient == 0:
+        return backward[beam]
+    if sc_orient == 1:
+        return forward[beam]
+    raise ValueError(f"Unsupported spacecraft orientation: {sc_orient}")
+
+
+def _h5_photon_ids(
+    date: str,
+    rgt: int,
+    cycle: int,
+    spot: int,
+    count: int,
+) -> list[str]:
+    return [
+        canonical_photon_id(date, rgt, cycle, spot, index)
+        for index in range(count)
+    ]
 
 
 def _beam_payload(
@@ -687,78 +638,3 @@ def _class_values_for_group(
             raise ValueError(f"Invalid label: {label}")
         values[source_row] = LABEL_TO_CLASS_PH[label]  # type: ignore[index]
     return values.astype(np.int16)
-
-
-def _set_manual_confidence_values(group: h5py.Group) -> None:
-    _set_existing_dataset_constant(group, "confidence", 1)
-    _set_existing_dataset_constant(group, "low_confidence_flag", 0)
-
-
-def _set_cleaner_metadata(
-    h5: h5py.File,
-    group: h5py.Group,
-    source_relative_path: str,
-    source_path: Path,
-    beam: str,
-) -> None:
-    now = datetime.now(timezone.utc).isoformat()
-    h5.attrs["bathy_labeler_tool"] = "ATL24 Bathymetry Cleaner"
-    h5.attrs["bathy_labeler_source"] = source_relative_path
-    source_stat = source_path.stat()
-    h5.attrs[SOURCE_SIZE_ATTR] = source_stat.st_size
-    h5.attrs[SOURCE_MTIME_ATTR] = source_stat.st_mtime_ns
-    h5.attrs["bathy_labeler_updated_utc"] = now
-    group.attrs["bathy_labeler_cleaned_beam"] = beam
-    group.attrs["bathy_labeler_updated_utc"] = now
-
-
-def _manual_output_matches_source(h5: h5py.File, source_path: Path) -> bool:
-    try:
-        stored_size = int(h5.attrs[SOURCE_SIZE_ATTR])
-        stored_mtime = int(h5.attrs[SOURCE_MTIME_ATTR])
-    except (KeyError, TypeError, ValueError, OverflowError):
-        return False
-    source_stat = source_path.stat()
-    return (
-        stored_size == source_stat.st_size
-        and stored_mtime == source_stat.st_mtime_ns
-    )
-
-
-def _manual_output_matches_target(
-    h5: h5py.File,
-    source_relative_path: str,
-    beam: str,
-) -> bool:
-    if beam not in h5:
-        return False
-    if any(other_beam != beam and other_beam in h5 for other_beam in BEAM_NAMES):
-        return False
-    stored_source = _h5_attr_text(h5.attrs.get("bathy_labeler_source"))
-    stored_beam = _h5_attr_text(
-        h5[beam].attrs.get("bathy_labeler_cleaned_beam")
-    )
-    return stored_source == source_relative_path and stored_beam == beam
-
-
-def _h5_attr_text(value: object) -> str | None:
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return value if isinstance(value, str) else None
-
-
-def _set_existing_dataset_constant(
-    group: h5py.Group,
-    dataset_name: str,
-    value: int,
-) -> None:
-    if dataset_name not in group:
-        return
-    dataset = group[dataset_name]
-    photon_count = int(group["x_atc"].shape[0])
-    if dataset.shape and int(dataset.shape[0]) != photon_count:
-        raise ValueError(
-            f"{dataset_name} length mismatch for beam {group.name}: "
-            f"expected {photon_count}, found {int(dataset.shape[0])}"
-        )
-    dataset[...] = np.full(dataset.shape, value, dtype=dataset.dtype)

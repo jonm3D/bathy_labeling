@@ -1,5 +1,5 @@
 import maplibregl, { type GeoJSONSource } from "maplibre-gl";
-import type { Feature, LineString } from "geojson";
+import type { Feature, LineString, MultiPolygon, Polygon } from "geojson";
 import { buildEsriSatelliteStyle } from "./basemap.js";
 import {
   clampDistanceRangeToFullRange,
@@ -15,6 +15,7 @@ const MAP_TRACK_COLOR = "#0891b2";
 
 export interface LabelerMap {
   setSegment(payload: SegmentPayload, options?: SegmentMapOptions): void;
+  clearSegment(): void;
   syncToSegmentRange(syncView: MapSyncView, animated: boolean): void;
   getVisibleSegmentRange(payload: SegmentPayload): DistanceRange | null;
   onCameraChange(handler: () => void): () => void;
@@ -49,6 +50,7 @@ export function createMap(container: HTMLElement): LabelerMap {
   let latestRenderVersion = 0;
   let completedRenderVersion = 0;
   let latestShouldFitSegment = true;
+  let siteMarker: maplibregl.Marker | null = null;
 
   const scheduleRender = () => {
     if (renderQueued) {
@@ -63,6 +65,8 @@ export function createMap(container: HTMLElement): LabelerMap {
       map.resize();
       ensureLayers(map);
       renderPayload(map, latestPayload, latestShouldFitSegment);
+      siteMarker?.remove();
+      siteMarker = renderSiteMarker(map, latestPayload);
       completedRenderVersion = latestRenderVersion;
     });
   };
@@ -105,6 +109,15 @@ export function createMap(container: HTMLElement): LabelerMap {
       latestShouldFitSegment = options.fit !== false;
       latestRenderVersion += 1;
       scheduleRender();
+    },
+    clearSegment() {
+      latestPayload = null;
+      const track = map.getSource("segment-track") as GeoJSONSource | undefined;
+      const aoi = map.getSource("review-aoi") as GeoJSONSource | undefined;
+      track?.setData(emptyLine());
+      aoi?.setData(emptyPolygon());
+      siteMarker?.remove();
+      siteMarker = null;
     },
     syncToSegmentRange(syncView: MapSyncView, animated: boolean) {
       const camera = map._cameraForBoxAndBearing(syncView.start, syncView.end, syncView.bearing, {
@@ -157,12 +170,42 @@ export function createMap(container: HTMLElement): LabelerMap {
       }
     },
     destroy() {
+      siteMarker?.remove();
       map.remove();
     },
   };
 }
 
+function renderSiteMarker(map: maplibregl.Map, payload: SegmentPayload): maplibregl.Marker | null {
+  const marker = payload.site_marker;
+  if (!marker) {
+    return null;
+  }
+  return new maplibregl.Marker({ color: "#dc2626" })
+    .setLngLat([marker.longitude, marker.latitude])
+    .setPopup(new maplibregl.Popup({ offset: 24 }).setText(marker.label))
+    .addTo(map);
+}
+
 function ensureLayers(map: maplibregl.Map): void {
+  if (!map.getSource("review-aoi")) {
+    map.addSource("review-aoi", {
+      type: "geojson",
+      data: emptyPolygon(),
+    });
+    map.addLayer({
+      id: "review-aoi-fill",
+      type: "fill",
+      source: "review-aoi",
+      paint: { "fill-color": "#f97316", "fill-opacity": 0.12 },
+    });
+    map.addLayer({
+      id: "review-aoi-outline",
+      type: "line",
+      source: "review-aoi",
+      paint: { "line-color": "#f97316", "line-width": 2.5, "line-opacity": 0.95 },
+    });
+  }
   if (!map.getSource("segment-track")) {
     map.addSource("segment-track", {
       type: "geojson",
@@ -196,6 +239,16 @@ function renderPayload(map: maplibregl.Map, payload: SegmentPayload, fitSegment:
       coordinates,
     },
   });
+  const aoiSource = map.getSource("review-aoi") as GeoJSONSource | undefined;
+  aoiSource?.setData(
+    payload.aoi_geometry
+      ? {
+          type: "Feature",
+          properties: {},
+          geometry: payload.aoi_geometry,
+        }
+      : emptyPolygon(),
+  );
   const bounds = fitSegment ? boundsForCoordinates(coordinates) : null;
   if (bounds) {
     map.fitBounds(bounds, { padding: 36, duration: 350 });
@@ -207,5 +260,13 @@ function emptyLine(): Feature<LineString> {
     type: "Feature",
     properties: {},
     geometry: { type: "LineString", coordinates: [] },
+  };
+}
+
+function emptyPolygon(): Feature<Polygon | MultiPolygon> {
+  return {
+    type: "Feature",
+    properties: {},
+    geometry: { type: "Polygon", coordinates: [] },
   };
 }

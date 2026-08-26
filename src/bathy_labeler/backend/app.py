@@ -11,6 +11,7 @@ from bathy_labeler.backend.hdf5_store import Atl24Store
 from bathy_labeler.backend.labels import LabelSidecarStore, LabelValidationError
 from bathy_labeler.backend.proposals import generate_seeded_proposal
 from bathy_labeler.backend.reprocess import ReprocessSession
+from bathy_labeler.backend.review import SlideRuleReviewSession
 
 
 def create_app(
@@ -195,6 +196,52 @@ def create_reprocess_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if static_dir is not None:
+        _mount_static_app(app, static_dir)
+
+    return app
+
+
+def create_review_app(
+    session: SlideRuleReviewSession,
+    static_dir: Path | None = None,
+) -> FastAPI:
+    app = FastAPI(title="ATL24 AOI Labeler", version="0.3.0")
+
+    @app.get("/health")
+    def health() -> dict[str, object]:
+        return {"status": "ok", **session.manifest()}
+
+    @app.get("/manifest")
+    def manifest() -> dict[str, object]:
+        return session.manifest()
+
+    @app.get("/review/sources")
+    def review_sources() -> dict[str, object]:
+        return session.sources_payload()
+
+    @app.get("/review/track")
+    def review_track(source: str, track: str) -> dict[str, object]:
+        try:
+            return session.read_track(source, track)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.put("/review/track/labels")
+    def save_review_track(body: dict[str, Any]) -> dict[str, object]:
+        try:
+            return session.save_track(
+                source_id=str(body["source"]),
+                track_key=str(body["track"]),
+                labels=list(body.get("labels", [])),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if static_dir is not None:

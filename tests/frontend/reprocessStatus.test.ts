@@ -45,4 +45,5 @@ test("reprocess beam status and label origin text are human-readable", () => {
   assert.equal(reprocessBeamStatusText("invalid"), "invalid output");
   assert.equal(labelOriginStatusText("manual_output"), "Loaded manual output labels");
   assert.equal(labelOriginStatusText("atl24_original"), "Loaded original ATL24 labels");
+  assert.equal(labelOriginStatusText("raw_unclassified"), "Loaded unclassified raw photons");
 });

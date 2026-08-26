@@ -7,6 +7,9 @@ import type {
   ReprocessBeamPayload,
   ReprocessSavePayload,
   ReprocessSourceListPayload,
+  ReviewSourceListPayload,
+  ReviewSavePayload,
+  ReviewTrackPayload,
   SegmentListPayload,
   SegmentPayload,
 } from "./types.js";
@@ -41,6 +44,11 @@ export function buildProposalUrl(segmentId: string): string {
 export function buildReprocessBeamUrl(source: string, beam: string): string {
   const params = new URLSearchParams({ source, beam });
   return `/reprocess/beam?${params.toString()}`;
+}
+
+export function buildReviewTrackUrl(source: string, track: string): string {
+  const params = new URLSearchParams({ source, track });
+  return `/review/track?${params.toString()}`;
 }
 
 export function fetchManifest(): Promise<ManifestPayload> {
@@ -89,6 +97,22 @@ export function fetchReprocessSources(): Promise<ReprocessSourceListPayload> {
 
 export function fetchReprocessBeam(source: string, beam: string): Promise<ReprocessBeamPayload> {
   return fetchJson<ReprocessBeamPayload>(buildReprocessBeamUrl(source, beam));
+}
+
+export function fetchReviewSources(): Promise<ReviewSourceListPayload> {
+  return fetchJson<ReviewSourceListPayload>("/review/sources");
+}
+
+export function fetchReviewTrack(source: string, track: string): Promise<ReviewTrackPayload> {
+  return fetchJson<ReviewTrackPayload>(buildReviewTrackUrl(source, track));
+}
+
+export function saveReviewTrack(source: string, track: string, labels: LabelRow[]): Promise<ReviewSavePayload> {
+  return fetchJson<ReviewSavePayload>("/review/track/labels", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source, track, labels }),
+  });
 }
 
 export function requestReprocessProposal(source: string, beam: string, seeds: LabelRow[]): Promise<ProposalPayload> {

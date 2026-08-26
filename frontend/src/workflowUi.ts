@@ -19,7 +19,11 @@ export type ShortcutAction =
   | "escape"
   | "save"
   | "undo"
-  | "redo";
+  | "redo"
+  | "previous_site"
+  | "next_site"
+  | "previous_track"
+  | "next_track";
 
 export interface ShortcutKeyInput {
   key: string;
@@ -174,6 +178,18 @@ export function shortcutActionForKey(input: ShortcutKeyInput): ShortcutAction | 
   }
   if (input.key === "Escape") {
     return "escape";
+  }
+  if (input.key === "ArrowUp") {
+    return "previous_site";
+  }
+  if (input.key === "ArrowDown") {
+    return "next_site";
+  }
+  if (input.key === "ArrowLeft") {
+    return "previous_track";
+  }
+  if (input.key === "ArrowRight") {
+    return "next_track";
   }
   if (key === "1") {
     return "label_surface";

@@ -20,7 +20,10 @@ export function reprocessBeamStatusText(status: ReprocessBeamStatus): string {
 }
 
 export function labelOriginStatusText(origin: ReprocessLabelOrigin): string {
-  return origin === "manual_output" ? "Loaded manual output labels" : "Loaded original ATL24 labels";
+  if (origin === "manual_output") {
+    return "Loaded manual output labels";
+  }
+  return origin === "atl24_original" ? "Loaded original ATL24 labels" : "Loaded unclassified raw photons";
 }
 
 function statusClass(status: ReprocessFileStatus): string {

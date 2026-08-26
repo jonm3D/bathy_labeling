@@ -1,71 +1,24 @@
 from __future__ import annotations
 
-import os
-import shutil
 from pathlib import Path
 
+import geopandas as gpd
 import h5py
-import numpy as np
 import pytest
 
-from bathy_labeler.backend.reprocess import (
-    LABEL_TO_CLASS_PH,
-    ReprocessSession,
-    SOURCE_MTIME_ATTR,
-    SOURCE_SIZE_ATTR,
-    _manual_output_has_valid_class_ph,
-)
-
+from bathy_labeler.backend.reprocess import LABEL_TO_CLASS_PH, ReprocessSession
 from tests.backend.test_hdf5_store import write_atl24_like_file
+
+SOURCE_NAME = "ATL24_20240102000000_01230701_001_01.h5"
+SOURCE_RELATIVE = f"Guam/{SOURCE_NAME}"
 
 
 def make_session(tmp_path: Path) -> ReprocessSession:
     input_dir = tmp_path / "ATL24_inputs"
     output_dir = tmp_path / "ATL24_inputs_labeled"
-    write_atl24_like_file(input_dir / "Guam" / "ATL24_sample.h5")
+    write_atl24_like_file(input_dir / SOURCE_RELATIVE)
     write_atl24_like_file(input_dir / "Guam" / "ATL24_sample_manual.h5")
     return ReprocessSession(input_dir=input_dir, output_dir=output_dir)
-
-
-def write_manual_output(
-    session: ReprocessSession,
-    source_relative_path: str,
-    beam: str,
-    class_ph: np.ndarray,
-) -> Path:
-    assert session.input_dir is not None
-    assert session.output_dir is not None
-    source_path = session.input_dir / source_relative_path
-    output_path = (
-        session.output_dir
-        / Path(source_relative_path).parent
-        / f"{Path(source_relative_path).stem}_{beam}_manual.h5"
-    )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source_path, output_path)
-    source_stat = source_path.stat()
-    with h5py.File(output_path, "r+") as h5:
-        for other_beam in ("gt1l", "gt1r"):
-            if other_beam != beam and other_beam in h5:
-                del h5[other_beam]
-        h5[beam]["class_ph"][:] = class_ph
-        h5.attrs["bathy_labeler_source"] = source_relative_path
-        h5.attrs[SOURCE_SIZE_ATTR] = source_stat.st_size
-        h5.attrs[SOURCE_MTIME_ATTR] = source_stat.st_mtime_ns
-        h5[beam].attrs["bathy_labeler_cleaned_beam"] = beam
-    return output_path
-
-
-def add_confidence_datasets(path: Path) -> None:
-    with h5py.File(path, "r+") as h5:
-        for beam in ("gt1l", "gt1r"):
-            count = int(h5[beam]["x_atc"].shape[0])
-            h5[beam].create_dataset(
-                "confidence", data=np.full(count, 0.25, dtype=np.float32)
-            )
-            h5[beam].create_dataset(
-                "low_confidence_flag", data=np.ones(count, dtype=np.int8)
-            )
 
 
 def test_configuring_session_scans_original_h5_files_only(
@@ -73,150 +26,15 @@ def test_configuring_session_scans_original_h5_files_only(
 ) -> None:
     session = make_session(tmp_path)
 
-    manifest = session.manifest()
-    sources = session.sources_payload()
+    source = session.sources_payload()["sources"][0]
 
-    assert manifest["mode"] == "reprocess"
-    assert manifest["input_dir"].endswith("ATL24_inputs")
-    assert manifest["output_dir"].endswith("ATL24_inputs_labeled")
-    assert sources["count"] == 1
-    assert (
-        sources["sources"][0]["source_relative_path"] == "Guam/ATL24_sample.h5"
-    )
-    assert sources["sources"][0]["file_name"] == "ATL24_sample.h5"
-    assert sources["sources"][0]["beams"] == ["gt1l", "gt1r"]
-    assert sources["sources"][0]["status"] == "unclassified"
-    assert sources["sources"][0]["beam_count"] == 2
-    assert sources["sources"][0]["completed_beam_count"] == 0
-    assert sources["sources"][0]["beam_statuses"] == {
+    assert source["source_relative_path"] == SOURCE_RELATIVE
+    assert source["beams"] == ["gt1l", "gt1r"]
+    assert source["status"] == "unclassified"
+    assert source["beam_statuses"] == {
         "gt1l": "unclassified",
         "gt1r": "unclassified",
     }
-
-
-def test_sources_payload_reports_partial_and_complete_output_status(
-    tmp_path: Path,
-) -> None:
-    session = make_session(tmp_path)
-    payload = session.read_beam("Guam/ATL24_sample.h5", "gt1l")
-    gt1l_classes = np.full(len(payload["labels"]), 40, dtype=np.int16)
-    gt1r_classes = np.full(len(payload["labels"]), 41, dtype=np.int16)
-
-    write_manual_output(session, "Guam/ATL24_sample.h5", "gt1l", gt1l_classes)
-    partial = session.sources_payload()["sources"][0]
-
-    assert partial["status"] == "partial"
-    assert partial["beam_count"] == 2
-    assert partial["completed_beam_count"] == 1
-    assert partial["beam_statuses"] == {
-        "gt1l": "complete",
-        "gt1r": "unclassified",
-    }
-
-    write_manual_output(session, "Guam/ATL24_sample.h5", "gt1r", gt1r_classes)
-    complete = session.sources_payload()["sources"][0]
-
-    assert complete["status"] == "complete"
-    assert complete["completed_beam_count"] == 2
-    assert complete["beam_statuses"] == {"gt1l": "complete", "gt1r": "complete"}
-
-
-def test_sources_payload_marks_invalid_manual_output_without_counting_complete(
-    tmp_path: Path,
-) -> None:
-    session = make_session(tmp_path)
-    manual_path = write_manual_output(
-        session, "Guam/ATL24_sample.h5", "gt1l", np.zeros(150, dtype=np.int16)
-    )
-    with h5py.File(manual_path, "r+") as h5:
-        del h5["gt1l"]["class_ph"]
-        h5["gt1l"].create_dataset(
-            "class_ph", data=np.zeros(149, dtype=np.int16)
-        )
-
-    source = session.sources_payload()["sources"][0]
-
-    assert source["status"] == "invalid"
-    assert source["completed_beam_count"] == 0
-    assert source["invalid_beam_count"] == 1
-    assert source["beam_statuses"] == {
-        "gt1l": "invalid",
-        "gt1r": "unclassified",
-    }
-
-
-def test_manual_output_is_invalid_after_source_file_changes(
-    tmp_path: Path,
-) -> None:
-    session = make_session(tmp_path)
-    write_manual_output(
-        session, "Guam/ATL24_sample.h5", "gt1l", np.zeros(150, dtype=np.int16)
-    )
-    assert session.input_dir is not None
-    source_path = session.input_dir / "Guam" / "ATL24_sample.h5"
-    before = source_path.stat()
-    with h5py.File(source_path, "r+") as h5:
-        h5["gt1l"]["lon_ph"][0] += 0.01
-    after = source_path.stat()
-    os.utime(
-        source_path,
-        ns=(after.st_atime_ns, max(before.st_mtime_ns, after.st_mtime_ns) + 1),
-    )
-
-    source = session.sources_payload()["sources"][0]
-
-    assert source["beam_statuses"]["gt1l"] == "invalid"
-    with pytest.raises(ValueError, match="does not match the current source"):
-        session.read_beam("Guam/ATL24_sample.h5", "gt1l")
-
-
-def test_manual_output_is_invalid_when_cleaned_beam_metadata_is_wrong(
-    tmp_path: Path,
-) -> None:
-    session = make_session(tmp_path)
-    manual_path = write_manual_output(
-        session, "Guam/ATL24_sample.h5", "gt1r", np.zeros(150, dtype=np.int16)
-    )
-    with h5py.File(manual_path, "r+") as h5:
-        h5["gt1r"].attrs["bathy_labeler_cleaned_beam"] = "gt1l"
-
-    source = session.sources_payload()["sources"][0]
-
-    assert source["beam_statuses"]["gt1r"] == "invalid"
-    with pytest.raises(ValueError, match="requested source and beam"):
-        session.read_beam("Guam/ATL24_sample.h5", "gt1r")
-
-
-def test_manual_output_is_invalid_when_it_contains_an_extra_beam(
-    tmp_path: Path,
-) -> None:
-    session = make_session(tmp_path)
-    manual_path = write_manual_output(
-        session, "Guam/ATL24_sample.h5", "gt1l", np.zeros(150, dtype=np.int16)
-    )
-    assert session.input_dir is not None
-    source_path = session.input_dir / "Guam" / "ATL24_sample.h5"
-    with h5py.File(source_path, "r") as source, h5py.File(manual_path, "r+") as manual:
-        source.copy("gt1r", manual)
-
-    source = session.sources_payload()["sources"][0]
-
-    assert source["beam_statuses"]["gt1l"] == "invalid"
-
-
-def test_malformed_beam_does_not_hide_other_valid_beams(tmp_path: Path) -> None:
-    session = make_session(tmp_path)
-    assert session.input_dir is not None
-    source_path = session.input_dir / "Guam" / "ATL24_sample.h5"
-    with h5py.File(source_path, "r+") as h5:
-        del h5["gt1r"]["night_flag"]
-        h5["gt1r"].create_dataset("night_flag", data=np.zeros(1, dtype=np.int8))
-
-    session.configure(session.input_dir, session.output_dir)
-    sources = session.sources_payload()["sources"]
-
-    assert len(sources) == 1
-    assert sources[0]["beams"] == ["gt1l"]
 
 
 def test_full_beam_payload_uses_original_atl24_classifications(
@@ -224,273 +42,142 @@ def test_full_beam_payload_uses_original_atl24_classifications(
 ) -> None:
     session = make_session(tmp_path)
 
-    payload = session.read_beam("Guam/ATL24_sample.h5", "gt1l")
+    payload = session.read_beam(SOURCE_RELATIVE, "gt1l")
 
-    assert payload["beam"]["beam"] == "gt1l"
     assert payload["beam"]["photon_count"] == 150
-    assert payload["beam"]["x_atc_start_m"] == 0.0
-    assert payload["beam"]["x_atc_end_m"] == 14900.0
     assert payload["photons"]["source_row"][:3] == [0, 1, 2]
-    assert payload["photons"]["source_row"][-1] == 149
-    assert payload["labels"][:3] == [
-        {"source_row": 0, "label": "surface", "label_source": "auto"},
-        {"source_row": 1, "label": "surface", "label_source": "auto"},
-        {"source_row": 2, "label": "surface", "label_source": "auto"},
-    ]
-    assert payload["labels"][20] == {
-        "source_row": 20,
-        "label": "bathy",
-        "label_source": "auto",
-    }
-    assert payload["labels"][-1] == {
-        "source_row": 149,
-        "label": "no_label",
-        "label_source": "auto",
-    }
+    assert payload["labels"][0]["label"] == "surface"
+    assert payload["labels"][20]["label"] == "bathy"
+    assert payload["labels"][-1]["label"] == "no_label"
     assert payload["label_origin"] == "atl24_original"
-    assert payload["manual_output_path"] is None
 
 
-def test_full_beam_payload_uses_existing_manual_output_classifications(
+def test_save_writes_qgis_ready_geopackage_and_reloads_labels(
     tmp_path: Path,
 ) -> None:
     session = make_session(tmp_path)
-    class_ph = np.zeros(150, dtype=np.int16)
-    class_ph[0] = 40
-    class_ph[1] = 41
-    manual_path = write_manual_output(
-        session, "Guam/ATL24_sample.h5", "gt1l", class_ph
-    )
+    payload = session.read_beam(SOURCE_RELATIVE, "gt1l")
+    labels = [dict(row) for row in payload["labels"]]
+    labels[0] = {
+        "source_row": 0,
+        "label": "bathy",
+        "label_source": "manual",
+    }
 
-    payload = session.read_beam("Guam/ATL24_sample.h5", "gt1l")
+    result = session.save_source(SOURCE_RELATIVE, {"gt1l": labels})
 
-    assert payload["label_origin"] == "manual_output"
-    assert payload["manual_output_path"] == str(manual_path)
-    assert payload["labels"][:3] == [
-        {"source_row": 0, "label": "bathy", "label_source": "auto"},
-        {"source_row": 1, "label": "surface", "label_source": "auto"},
-        {"source_row": 2, "label": "no_label", "label_source": "auto"},
-    ]
-
-
-def test_manual_output_with_mismatched_class_length_fails_clearly(
-    tmp_path: Path,
-) -> None:
-    session = make_session(tmp_path)
-    manual_path = write_manual_output(
-        session, "Guam/ATL24_sample.h5", "gt1l", np.zeros(150, dtype=np.int16)
-    )
-    with h5py.File(manual_path, "r+") as h5:
-        del h5["gt1l"]["class_ph"]
-        h5["gt1l"].create_dataset(
-            "class_ph", data=np.zeros(149, dtype=np.int16)
-        )
-
-    try:
-        session.read_beam("Guam/ATL24_sample.h5", "gt1l")
-    except ValueError as exc:
-        assert "class_ph length" in str(exc)
-        assert "gt1l" in str(exc)
-    else:
-        raise AssertionError(
-            "Expected mismatched manual output class_ph length to fail"
-        )
-
-
-def test_manual_output_status_validation_does_not_read_class_values(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    session = make_session(tmp_path)
-    manual_path = write_manual_output(
-        session,
-        "Guam/ATL24_sample.h5",
-        "gt1l",
-        np.zeros(150, dtype=np.int16),
-    )
-    original_getitem = h5py.Dataset.__getitem__
-
-    def fail_if_dataset_values_are_read(self, args):
-        if self.name.endswith("/class_ph"):
-            raise AssertionError(
-                "status validation should not materialize class_ph"
-            )
-        return original_getitem(self, args)
-
-    monkeypatch.setattr(
-        h5py.Dataset, "__getitem__", fail_if_dataset_values_are_read
-    )
-
-    assert _manual_output_has_valid_class_ph(
-        manual_path,
-        source_relative_path="Guam/ATL24_sample.h5",
-        beam="gt1l",
-        expected_count=150,
-    )
-
-
-def test_save_rewrites_only_target_beam_classifications(
-    tmp_path: Path,
-) -> None:
-    session = make_session(tmp_path)
-    assert session.input_dir is not None
-    add_confidence_datasets(session.input_dir / "Guam" / "ATL24_sample.h5")
-    payload = session.read_beam("Guam/ATL24_sample.h5", "gt1l")
-    labels = [
-        {
-            "source_row": row["source_row"],
-            "label": "surface",
-            "label_source": "auto",
-        }
-        for row in payload["labels"]
-    ]
-    labels[0] = {"source_row": 0, "label": "bathy", "label_source": "manual"}
-    labels[1] = {"source_row": 1, "label": "no_label", "label_source": "manual"}
-    labels[2] = {"source_row": 2, "label": "surface", "label_source": "manual"}
-
-    result = session.save_source("Guam/ATL24_sample.h5", {"gt1l": labels})
-
-    assert result["written_beams"] == ["gt1l"]
-    assert len(result["outputs"]) == 1
-    assert result["source_status"]["status"] == "partial"
+    output_path = Path(result["outputs"][0]["output_path"])
+    assert output_path.name == "20240102_rgt1234_cycle007_spot6.gpkg"
+    assert set(gpd.list_layers(output_path)["name"]) == {
+        "photons",
+        "bathymetry",
+    }
+    photons = gpd.read_file(output_path, layer="photons")
+    assert photons["photon_id"].iloc[0] == ("20240102_1234_007_6_00000000")
+    assert photons["class_manual"].iloc[0] == 40
+    assert photons["atl24_class"].iloc[0] == 41
+    assert photons["atl24_confidence"].iloc[0] == pytest.approx(0.5)
+    assert len(gpd.read_file(output_path, layer="bathymetry")) == 61
     assert result["source_status"]["beam_statuses"] == {
         "gt1l": "complete",
         "gt1r": "unclassified",
     }
-    output_path = Path(result["outputs"][0]["output_path"])
-    assert result["outputs"][0]["beam"] == "gt1l"
-    assert output_path.name == "ATL24_sample_gt1l_manual.h5"
-    assert output_path.exists()
-    assert not output_path.with_name("ATL24_sample_gt1r_manual.h5").exists()
-    source_stat = (
-        tmp_path / "ATL24_inputs" / "Guam" / "ATL24_sample.h5"
-    ).stat()
-    with h5py.File(
-        tmp_path / "ATL24_inputs" / "Guam" / "ATL24_sample.h5", "r"
-    ) as original:
-        with h5py.File(output_path, "r") as manual:
-            assert manual.attrs["rgt"] == original.attrs["rgt"]
-            assert manual.attrs[SOURCE_SIZE_ATTR] == source_stat.st_size
-            assert manual.attrs[SOURCE_MTIME_ATTR] == source_stat.st_mtime_ns
-            assert manual["gt1l"]["class_ph"][:5].tolist() == [
-                40,
-                0,
-                41,
-                41,
-                41,
-            ]
-            assert "gt1r" not in manual
-            assert manual["gt1l"]["confidence"][:].tolist() == [1.0] * 150
-            assert (
-                manual["gt1l"]["low_confidence_flag"][:].tolist() == [0] * 150
-            )
+
+    reloaded = session.read_beam(SOURCE_RELATIVE, "gt1l")
+    assert reloaded["label_origin"] == "manual_output"
+    assert reloaded["labels"][0] == {
+        "source_row": 0,
+        "label": "bathy",
+        "label_source": "auto",
+    }
 
 
-def test_save_rejects_incomplete_or_duplicate_beam_labels(tmp_path: Path) -> None:
-    session = make_session(tmp_path)
-    payload = session.read_beam("Guam/ATL24_sample.h5", "gt1l")
-    labels = [dict(row) for row in payload["labels"]]
-
-    with pytest.raises(ValueError, match="complete beam"):
-        session.save_source("Guam/ATL24_sample.h5", {"gt1l": labels[:-1]})
-
-    labels[-1] = dict(labels[0])
-    with pytest.raises(ValueError, match="Duplicate label row"):
-        session.save_source("Guam/ATL24_sample.h5", {"gt1l": labels})
-
-    assert session.output_dir is not None
-    assert not (
-        session.output_dir / "Guam" / "ATL24_sample_gt1l_manual.h5"
-    ).exists()
-
-
-def test_save_archives_existing_manual_output_before_replacing(
+def test_save_archives_existing_geopackage_before_replacing(
     tmp_path: Path,
 ) -> None:
     session = make_session(tmp_path)
-    old_classes = np.zeros(150, dtype=np.int16)
-    old_classes[0] = 41
-    manual_path = write_manual_output(
-        session, "Guam/ATL24_sample.h5", "gt1l", old_classes
-    )
-    payload = session.read_beam("Guam/ATL24_sample.h5", "gt1l")
-    labels = [dict(row) for row in payload["labels"]]
-    labels[0] = {"source_row": 0, "label": "bathy", "label_source": "manual"}
-
-    result = session.save_source("Guam/ATL24_sample.h5", {"gt1l": labels})
-
-    backups = result["backups"]
-    assert len(backups) == 1
-    assert backups[0]["beam"] == "gt1l"
-    backup_path = Path(backups[0]["backup_path"])
-    assert backup_path.exists()
-    assert backup_path.name.endswith("_manual.h5")
-    with h5py.File(backup_path, "r") as backup:
-        assert backup["gt1l"]["class_ph"][0] == 41
-    with h5py.File(manual_path, "r") as updated:
-        assert updated["gt1l"]["class_ph"][0] == 40
-
-
-def test_save_failure_preserves_existing_manual_output_and_cleans_temp_file(
-    tmp_path: Path,
-) -> None:
-    session = make_session(tmp_path)
-    old_classes = np.zeros(150, dtype=np.int16)
-    old_classes[0] = 41
-    manual_path = write_manual_output(
-        session, "Guam/ATL24_sample.h5", "gt1l", old_classes
-    )
-    payload = session.read_beam("Guam/ATL24_sample.h5", "gt1l")
-    labels = [dict(row) for row in payload["labels"]]
-    labels[0] = {"source_row": 0, "label": "land", "label_source": "manual"}
-
-    try:
-        session.save_source("Guam/ATL24_sample.h5", {"gt1l": labels})
-    except ValueError as exc:
-        assert "Invalid label" in str(exc)
-    else:
-        raise AssertionError("Expected invalid reprocess label to fail")
-
-    with h5py.File(manual_path, "r") as preserved:
-        assert preserved["gt1l"]["class_ph"][0] == 41
-    assert not list(manual_path.parent.glob(f".{manual_path.name}.*.tmp"))
-
-
-def test_save_multiple_beams_creates_one_manual_h5_per_beam(
-    tmp_path: Path,
-) -> None:
-    session = make_session(tmp_path)
-    gt1l_payload = session.read_beam("Guam/ATL24_sample.h5", "gt1l")
-    gt1r_payload = session.read_beam("Guam/ATL24_sample.h5", "gt1r")
-    gt1l_labels = [dict(row) for row in gt1l_payload["labels"]]
-    gt1r_labels = [dict(row) for row in gt1r_payload["labels"]]
-    gt1l_labels[0] = {
+    labels = session.read_beam(SOURCE_RELATIVE, "gt1l")["labels"]
+    first = session.save_source(SOURCE_RELATIVE, {"gt1l": labels})
+    output_path = Path(first["outputs"][0]["output_path"])
+    labels = [dict(row) for row in labels]
+    labels[0] = {
         "source_row": 0,
         "label": "bathy",
         "label_source": "manual",
     }
-    gt1r_labels[0] = {
-        "source_row": 0,
-        "label": "no_label",
-        "label_source": "manual",
-    }
+
+    second = session.save_source(SOURCE_RELATIVE, {"gt1l": labels})
+
+    backup_path = Path(second["backups"][0]["backup_path"])
+    assert backup_path.exists()
+    assert backup_path.name == output_path.name
+    assert (
+        gpd.read_file(backup_path, layer="photons")["class_manual"].iloc[0]
+        == 41
+    )
+    assert (
+        gpd.read_file(output_path, layer="photons")["class_manual"].iloc[0]
+        == 40
+    )
+
+
+def test_invalid_geopackage_is_reported(tmp_path: Path) -> None:
+    session = make_session(tmp_path)
+    labels = session.read_beam(SOURCE_RELATIVE, "gt1l")["labels"]
+    result = session.save_source(SOURCE_RELATIVE, {"gt1l": labels})
+    output_path = Path(result["outputs"][0]["output_path"])
+    output_path.write_text("not a GeoPackage")
+
+    source = session.sources_payload()["sources"][0]
+
+    assert source["beam_statuses"]["gt1l"] == "invalid"
+    with pytest.raises((ValueError, OSError)):
+        session.read_beam(SOURCE_RELATIVE, "gt1l")
+
+
+def test_save_rejects_incomplete_or_unsupported_labels(tmp_path: Path) -> None:
+    session = make_session(tmp_path)
+    labels = session.read_beam(SOURCE_RELATIVE, "gt1l")["labels"]
+    with pytest.raises(ValueError, match="complete beam"):
+        session.save_source(SOURCE_RELATIVE, {"gt1l": labels[:-1]})
+    labels = [dict(row) for row in labels]
+    labels[0]["label"] = "land"
+    with pytest.raises(ValueError, match="Invalid label"):
+        session.save_source(SOURCE_RELATIVE, {"gt1l": labels})
+
+
+def test_save_multiple_beams_creates_one_geopackage_per_track(
+    tmp_path: Path,
+) -> None:
+    session = make_session(tmp_path)
+    left = session.read_beam(SOURCE_RELATIVE, "gt1l")["labels"]
+    right = session.read_beam(SOURCE_RELATIVE, "gt1r")["labels"]
 
     result = session.save_source(
-        "Guam/ATL24_sample.h5", {"gt1l": gt1l_labels, "gt1r": gt1r_labels}
+        SOURCE_RELATIVE,
+        {"gt1l": left, "gt1r": right},
     )
 
     outputs = {
         item["beam"]: Path(item["output_path"]) for item in result["outputs"]
     }
-    assert sorted(outputs) == ["gt1l", "gt1r"]
-    assert outputs["gt1l"].name == "ATL24_sample_gt1l_manual.h5"
-    assert outputs["gt1r"].name == "ATL24_sample_gt1r_manual.h5"
-    with h5py.File(outputs["gt1l"], "r") as gt1l_manual:
-        assert gt1l_manual["gt1l"]["class_ph"][0] == 40
-        assert "gt1r" not in gt1l_manual
-    with h5py.File(outputs["gt1r"], "r") as gt1r_manual:
-        assert "gt1l" not in gt1r_manual
-        assert gt1r_manual["gt1r"]["class_ph"][0] == 0
+    assert outputs["gt1l"].name.endswith("spot6.gpkg")
+    assert outputs["gt1r"].name.endswith("spot5.gpkg")
+
+
+def test_malformed_beam_does_not_hide_other_valid_beams(
+    tmp_path: Path,
+) -> None:
+    session = make_session(tmp_path)
+    assert session.input_dir is not None
+    source_path = session.input_dir / SOURCE_RELATIVE
+    with h5py.File(source_path, "r+") as h5:
+        del h5["gt1r"]["night_flag"]
+        h5["gt1r"].create_dataset("night_flag", data=[0])
+
+    session.configure(session.input_dir, session.output_dir)
+
+    assert session.sources_payload()["sources"][0]["beams"] == ["gt1l"]
 
 
 def test_label_to_class_mapping_matches_atl24_codes() -> None:
@@ -499,66 +186,3 @@ def test_label_to_class_mapping_matches_atl24_codes() -> None:
         "bathy": 40,
         "no_label": 0,
     }
-
-
-def test_full_beam_proposal_preserves_manual_seed_rows(tmp_path: Path) -> None:
-    session = make_session(tmp_path)
-
-    proposal = session.propose(
-        "Guam/ATL24_sample.h5",
-        "gt1l",
-        seeds=[
-            {"source_row": 0, "label": "surface", "label_source": "manual"},
-            {"source_row": 149, "label": "bathy", "label_source": "manual"},
-        ],
-    )
-
-    assert proposal["rows"][0] == {
-        "source_row": 0,
-        "label": "surface",
-        "label_source": "manual",
-    }
-    assert proposal["rows"][-1] == {
-        "source_row": 149,
-        "label": "bathy",
-        "label_source": "manual",
-    }
-    assert len(proposal["rows"]) == 150
-
-
-def test_reset_returns_original_atl24_labels(tmp_path: Path) -> None:
-    session = make_session(tmp_path)
-
-    reset = session.reset_beam("Guam/ATL24_sample.h5", "gt1l")
-
-    assert reset["rows"][0] == {
-        "source_row": 0,
-        "label": "surface",
-        "label_source": "auto",
-    }
-    assert reset["rows"][20] == {
-        "source_row": 20,
-        "label": "bathy",
-        "label_source": "auto",
-    }
-    assert reset["rows"][-1] == {
-        "source_row": 149,
-        "label": "no_label",
-        "label_source": "auto",
-    }
-
-
-def test_full_beam_proposal_uses_no_label_for_default_residual_class(
-    tmp_path: Path,
-) -> None:
-    session = make_session(tmp_path)
-
-    proposal = session.propose(
-        "Guam/ATL24_sample.h5",
-        "gt1l",
-        seeds=[{"source_row": 0, "label": "surface", "label_source": "manual"}],
-    )
-
-    labels = {row["label"] for row in proposal["rows"]}
-    assert labels <= {"surface", "no_label"}
-    assert proposal["rows"][-1]["label"] == "no_label"

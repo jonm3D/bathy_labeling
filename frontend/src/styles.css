@@ -520,6 +520,20 @@ button.is-primary:disabled:hover {
   padding: 10px;
 }
 
+.review-note {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  padding: 9px 10px;
+  border-left: 3px solid var(--action);
+  background: var(--action-soft);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
 .segment-button {
   --segment-status: var(--border);
   display: grid;
@@ -579,6 +593,16 @@ button.is-primary:disabled:hover {
 .segment-button small {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.segment-button .track-review-note {
+  display: -webkit-box;
+  overflow: hidden;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .profile-panel,

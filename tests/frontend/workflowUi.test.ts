@@ -104,5 +104,10 @@ test("shortcut mapping ignores text entry and maps labeling accelerators", () =>
   assert.equal(shortcutActionForKey({ key: "s", metaKey: true, targetTagName: "body" }), "save");
   assert.equal(shortcutActionForKey({ key: "z", metaKey: true, targetTagName: "body" }), "undo");
   assert.equal(shortcutActionForKey({ key: "z", metaKey: true, shiftKey: true, targetTagName: "body" }), "redo");
+  assert.equal(shortcutActionForKey({ key: "ArrowUp", targetTagName: "body" }), "previous_site");
+  assert.equal(shortcutActionForKey({ key: "ArrowDown", targetTagName: "body" }), "next_site");
+  assert.equal(shortcutActionForKey({ key: "ArrowLeft", targetTagName: "body" }), "previous_track");
+  assert.equal(shortcutActionForKey({ key: "ArrowRight", targetTagName: "body" }), "next_track");
   assert.equal(shortcutActionForKey({ key: "1", targetTagName: "input" }), null);
+  assert.equal(shortcutActionForKey({ key: "ArrowRight", targetTagName: "input" }), null);
 });

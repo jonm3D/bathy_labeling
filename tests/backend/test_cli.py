@@ -13,6 +13,7 @@ def test_default_cli_focuses_on_atl24_cleanup() -> None:
     assert "ATL24 bathymetry cleaner" in result.stdout
     assert "--input" in result.stdout
     assert "--output" in result.stdout
+    assert "--review-config" in result.stdout
     assert "--training" not in result.stdout
     assert "--training-source" not in result.stdout
     assert "--project" not in result.stdout

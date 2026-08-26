@@ -38,6 +38,8 @@ import {
   requestReprocessDemSample,
   fetchReprocessBeam,
   fetchReprocessSources,
+  fetchReviewSources,
+  fetchReviewTrack,
   fetchSegment,
   fetchSegments,
   requestProposal,
@@ -45,6 +47,7 @@ import {
   resetReprocessBeam,
   saveLabels,
   saveReprocessSource,
+  saveReviewTrack,
 } from "./api.js";
 import { reprocessSaveStatusText } from "./saveStatus.js";
 import { createPayloadSwitchGuard } from "./syncState.js";
@@ -73,12 +76,15 @@ import type {
   ManifestPayload,
   ReprocessBeamPayload,
   ReprocessSource,
+  ReviewSource,
+  ReviewTrackPayload,
   SegmentPayload,
   SegmentSummary,
 } from "./types.js";
 
-type AppMode = "reprocess" | "training";
+type AppMode = "reprocess" | "training" | "review";
 
+const appHeading = requireElement("app-heading");
 const setupPanel = requireElement("setup-panel");
 const inputDir = requireInput("input-dir");
 const outputDir = requireInput("output-dir");
@@ -112,10 +118,12 @@ const mapContainer = requireElement("map");
 const classButtons = requireElement("class-buttons");
 const emptyWorkflow = requireElement("empty-workflow");
 const labelingControls = requireElement("labeling-controls");
+const labelingHeading = requireElement("labeling-heading");
 const actionControls = requireElement("action-controls");
 const runProposal = requireButton("run-proposal");
 const showClassificationsToggle = requireInput("show-classifications");
 const showClassificationsControl = requireElement("show-classifications-control");
+const showClassificationsLabel = requireElement("show-classifications-label");
 const showDemToggle = requireInput("show-dem");
 const showDemControl = requireElement("show-dem-control");
 const resetAtl24 = requireButton("reset-atl24");
@@ -134,6 +142,7 @@ const payloadSwitchGuard = createPayloadSwitchGuard();
 let appMode: AppMode = "reprocess";
 let segments: SegmentSummary[] = [];
 let reprocessSources: ReprocessSource[] = [];
+let reviewSources: ReviewSource[] = [];
 let currentPayload: SegmentPayload | null = null;
 let currentLabels: LabelRow[] = [];
 let selectedRows = new Set<number>();
@@ -252,7 +261,7 @@ runProposal.addEventListener("click", async () => {
   }
   if (appMode === "reprocess") {
     await runReprocessProposal();
-  } else {
+  } else if (appMode === "training") {
     await runTrainingProposal();
   }
 });
@@ -318,7 +327,9 @@ showClassificationsToggle.addEventListener("change", () => {
     showClassifications: showClassificationsToggle.checked,
   };
   updateShowClassificationsButton();
-  setStatus(settings.showClassifications ? "Class colors on" : "Grey points");
+  setStatus(
+    settings.showClassifications ? "Class colors on" : "Grey points",
+  );
   void rerender();
 });
 
@@ -353,7 +364,9 @@ for (const input of [pointSize, pointOpacity]) {
 async function boot(): Promise<void> {
   setStatus("Loading");
   const manifest = await fetchManifest();
-  if (manifest.mode === "reprocess") {
+  if (manifest.mode === "review") {
+    await initializeReviewMode(manifest);
+  } else if (manifest.mode === "reprocess") {
     await initializeReprocessMode(manifest);
   } else {
     await initializeTrainingMode();
@@ -371,15 +384,313 @@ function handleBootError(error: unknown): void {
   setStatus(message);
 }
 
+async function initializeReviewMode(manifest: ManifestPayload): Promise<void> {
+  appMode = "review";
+  document.title = "ICESat-2 AOI Labeler";
+  appHeading.textContent = document.title;
+  setupPanel.hidden = true;
+  demPathLabel.hidden = true;
+  showDemControl.hidden = true;
+  showClassificationsControl.hidden = false;
+  showClassificationsLabel.textContent = "Class colors";
+  classButtons.hidden = false;
+  labelingHeading.textContent = "Labeling";
+  configureLabelButtonsForMode("reprocess");
+  runProposal.hidden = true;
+  resetAtl24.hidden = true;
+  saveLabelsButton.textContent = "Save GeoPackage";
+  emptyWorkflow.textContent = "Select a site and track to classify";
+  fileHeading.textContent = "Sites";
+  beamHeading.textContent = "Tracks";
+  settings = { ...settings, showClassifications: true, showDem: false };
+  showClassificationsToggle.checked = true;
+  await loadReviewSources(manifest.context_margin_m ?? 1000);
+}
+
+async function loadReviewSources(contextMarginM: number): Promise<void> {
+  const payload = await fetchReviewSources();
+  reviewSources = payload.sources;
+  segmentCount.textContent = `${payload.count.toLocaleString()} sites · ${formatKm(contextMarginM)} km context · ↑/↓ sites · ←/→ tracks`;
+  const first = reviewSources.find((source) => source.beams.length > 0) ?? reviewSources[0];
+  selectedReprocessSource = first?.source_relative_path ?? null;
+  renderReviewSourceList();
+  if (first?.beams[0]) {
+    await selectReviewTrack(first.source_relative_path, first.beams[0]);
+  } else {
+    showEmptyReviewSite(first?.file_name ?? "No sites configured");
+  }
+}
+
+function renderReviewSourceList(): void {
+  fileList.replaceChildren(...reviewSources.map(reviewSourceButton));
+  renderReviewTrackList(selectedReprocessSource);
+  updateReviewSelectionButtons();
+}
+
+function renderReviewTrackList(sourceId: string | null): void {
+  const source = reviewSources.find((candidate) => candidate.source_relative_path === sourceId);
+  if (!source) {
+    beamList.replaceChildren();
+    return;
+  }
+  const elements: HTMLElement[] = [];
+  if (source.review_note) {
+    const note = document.createElement("p");
+    note.className = "review-note";
+    note.textContent = source.review_note;
+    note.title = source.review_note;
+    elements.push(note);
+  }
+  elements.push(...source.beams.map((track) => reviewTrackButton(source, track)));
+  beamList.replaceChildren(...elements);
+}
+
+function reviewSourceButton(source: ReviewSource): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "segment-button";
+  button.dataset.source = source.source_relative_path;
+  const dirtyCount = source.beams.filter((track) =>
+    dirtySelections.has(cacheKey(source.source_relative_path, track)),
+  ).length;
+  const dirtyText = dirtyCount > 0 ? ` · ${dirtyCount.toLocaleString()} unsaved` : "";
+  button.innerHTML = `<span>${source.file_name}</span><small>${source.beam_count.toLocaleString()} tracks · ${source.aoi_photon_count.toLocaleString()} photons · ${source.annotated_track_count.toLocaleString()} saved${dirtyText}</small>`;
+  button.addEventListener("click", () => {
+    selectedReprocessSource = source.source_relative_path;
+    renderReviewTrackList(source.source_relative_path);
+    updateReviewSelectionButtons();
+    if (source.beams[0]) {
+      void selectReviewTrack(source.source_relative_path, source.beams[0]);
+    } else {
+      showEmptyReviewSite(source.file_name);
+    }
+  });
+  return button;
+}
+
+function reviewTrackButton(source: ReviewSource, track: string): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "segment-button";
+  button.dataset.source = source.source_relative_path;
+  button.dataset.beam = track;
+  const photonCount = source.track_photon_counts[track] ?? 0;
+  const closestDistance = source.track_closest_distances_m[track];
+  const distanceText = closestDistance == null ? "distance unavailable" : `${closestDistance.toFixed(1)} m closest`;
+  const dirty = dirtySelections.has(cacheKey(source.source_relative_path, track));
+  const priorityIndex = source.priority_tracks.indexOf(track);
+  const priorityText = priorityIndex >= 0 ? `Review pick ${priorityIndex + 1} · ` : "";
+  const reviewNote = source.track_notes[track];
+  const status = dirty
+    ? "unsaved"
+    : source.track_statuses[track] === "annotated"
+      ? "saved"
+      : "unlabeled";
+  button.innerHTML = `<span>${formatTrackKey(track)}</span><small>${priorityText}${distanceText} · ${photonCount.toLocaleString()} AOI photons · ${status}</small>`;
+  if (reviewNote) {
+    const note = document.createElement("small");
+    note.className = "track-review-note";
+    note.textContent = reviewNote;
+    button.append(note);
+  }
+  button.addEventListener("click", () => {
+    void selectReviewTrack(source.source_relative_path, track);
+  });
+  return button;
+}
+
+async function selectReviewTrack(source: string, track: string): Promise<void> {
+  const switchToken = beginPayloadSwitch();
+  setStatus("Loading track");
+  try {
+    selectedReprocessSource = source;
+    renderReviewTrackList(source);
+    updateReviewSelectionButtons();
+    const payload = await fetchReviewTrack(source, track);
+    if (!payloadSwitchGuard.isCurrent(switchToken)) {
+      return;
+    }
+    currentSource = source;
+    currentBeam = track;
+    currentSegmentId = null;
+    currentPayload = segmentPayloadFromReviewTrack(payload);
+    setActiveProfileRange(currentPayload);
+    currentLabels = cloneLabels(
+      reprocessLabelCache.get(cacheKey(source, track)) ?? payload.labels,
+    );
+    const selectionKey = currentSelectionKey();
+    if (selectionKey && !labelBaselines.has(selectionKey)) {
+      labelBaselines.set(selectionKey, cloneLabels(payload.labels));
+    }
+    labelHistory = labelHistorySnapshot(currentLabels);
+    updateDirtyStateForCurrentSelection();
+    selectedRows = new Set();
+    currentDemSample = null;
+    currentDemKey = null;
+    mapView.setSegment(currentPayload, { fit: !isMapSyncEnabled() });
+    activeSegment.textContent = `${payload.source.file_name} · RGT ${payload.beam.rgt}, cycle ${payload.beam.cycle}, spot ${payload.beam.spot}`;
+    const trackIndex = payload.source.beams.indexOf(track);
+    const closestDistance = payload.source.track_closest_distances_m[track];
+    const distanceText = closestDistance == null ? "" : ` · ${closestDistance.toFixed(1)} m closest`;
+    const reviewNote = payload.source.track_notes[track];
+    const noteText = reviewNote ? ` · ${reviewNote}` : "";
+    selectionDetail.textContent = `Track ${trackIndex + 1} of ${payload.source.beams.length}${distanceText} · ${payload.beam.photon_count.toLocaleString()} AOI photons · ${payload.beam.context_photon_count.toLocaleString()} with context${noteText}`;
+    selectionDetail.title = reviewNote ?? "";
+    updateReviewSelectionButtons();
+    updateSelectionControls();
+    await rerender();
+    if (!payloadSwitchGuard.isCurrent(switchToken)) {
+      return;
+    }
+    syncMapToProfile(true);
+    setStatus(
+      payload.label_origin === "manual_output"
+        ? "Saved classifications loaded"
+        : payload.source.product === "atl24"
+          ? "ATL24 labels loaded"
+          : "Raw ATL03 photons loaded",
+    );
+  } finally {
+    finishPayloadSwitch(switchToken);
+  }
+}
+
+async function saveCurrentReviewTrack(): Promise<void> {
+  if (!currentSource || !currentBeam) {
+    return;
+  }
+  const source = currentSource;
+  const track = currentBeam;
+  const labels = cloneLabels(currentLabels);
+  setStatus("Saving GeoPackage");
+  const saved = await saveReviewTrack(source, track, labels);
+  if (currentSource !== source || currentBeam !== track) {
+    return;
+  }
+  currentLabels = cloneLabels(saved.labels);
+  reprocessLabelCache.set(cacheKey(source, track), cloneLabels(saved.labels));
+  markCurrentSelectionSaved();
+  reviewSources = reviewSources.map((candidate) =>
+    candidate.source_relative_path === source ? saved.source_status : candidate,
+  );
+  renderReviewSourceList();
+  setStatus("GeoPackage saved");
+  await rerender();
+}
+
+function segmentPayloadFromReviewTrack(payload: ReviewTrackPayload): SegmentPayload {
+  return {
+    segment: {
+      segment_id: `${payload.beam.source_relative_path}::${payload.beam.beam}`,
+      inventory_version: `sliderule-${payload.source.product}-geoparquet-v1`,
+      segment_config_version: "aoi-plus-context",
+      stable_source_file_id: payload.beam.source_relative_path,
+      source_relative_path: payload.beam.source_relative_path,
+      source_label: payload.source.source_label,
+      file_name: payload.beam.file_name,
+      beam: payload.beam.beam,
+      x_atc_start_m: payload.beam.x_atc_start_m,
+      x_atc_end_m: payload.beam.x_atc_end_m,
+      context_x_atc_start_m: payload.beam.context_x_atc_start_m,
+      context_x_atc_end_m: payload.beam.context_x_atc_end_m,
+      photon_count: payload.beam.photon_count,
+      day_night: payload.beam.day_night,
+      beam_strength: payload.beam.beam_strength,
+      status: "unlabeled",
+    },
+    assigned: payload.assigned,
+    context: payload.context,
+    aoi_geometry: payload.aoi_geometry,
+    site_marker: payload.site_marker,
+    height_axis_label: payload.source.height_axis_label,
+  };
+}
+
+function showEmptyReviewSite(siteName: string): void {
+  currentPayload = null;
+  currentSource = selectedReprocessSource;
+  currentBeam = null;
+  currentLabels = [];
+  selectedRows = new Set();
+  clearProfile(profile);
+  mapView.clearSegment();
+  setActiveProfileRange(null);
+  activeSegment.textContent = siteName;
+  emptyWorkflow.textContent = "No profile available for this AOI";
+  selectionDetail.textContent = "No tracks intersect this AOI";
+  setStatus("0 AOI photons");
+  updateSelectionControls();
+}
+
+function updateReviewSelectionButtons(): void {
+  for (const button of fileList.querySelectorAll<HTMLButtonElement>("button[data-source]")) {
+    button.classList.toggle("is-selected", button.dataset.source === selectedReprocessSource);
+  }
+  for (const button of beamList.querySelectorAll<HTMLButtonElement>("button[data-beam]")) {
+    button.classList.toggle(
+      "is-selected",
+      button.dataset.source === currentSource && button.dataset.beam === currentBeam,
+    );
+  }
+}
+
+async function navigateReview(action: "previous_site" | "next_site" | "previous_track" | "next_track"): Promise<void> {
+  if (appMode !== "review" || reviewSources.length === 0 || payloadSwitchGuard.isSwitching()) {
+    return;
+  }
+  const sourceId = currentSource ?? selectedReprocessSource ?? reviewSources[0].source_relative_path;
+  const sourceIndex = Math.max(
+    0,
+    reviewSources.findIndex((source) => source.source_relative_path === sourceId),
+  );
+
+  if (action === "previous_site" || action === "next_site") {
+    const offset = action === "previous_site" ? -1 : 1;
+    const nextSource = reviewSources[(sourceIndex + offset + reviewSources.length) % reviewSources.length];
+    selectedReprocessSource = nextSource.source_relative_path;
+    renderReviewTrackList(nextSource.source_relative_path);
+    updateReviewSelectionButtons();
+    if (nextSource.beams[0]) {
+      await selectReviewTrack(nextSource.source_relative_path, nextSource.beams[0]);
+    } else {
+      showEmptyReviewSite(nextSource.file_name);
+    }
+    return;
+  }
+
+  const source = reviewSources[sourceIndex];
+  if (source.beams.length === 0) {
+    return;
+  }
+  const trackIndex = Math.max(0, source.beams.indexOf(currentBeam ?? source.beams[0]));
+  const offset = action === "previous_track" ? -1 : 1;
+  const nextTrack = source.beams[(trackIndex + offset + source.beams.length) % source.beams.length];
+  await selectReviewTrack(source.source_relative_path, nextTrack);
+}
+
+function formatTrackKey(track: string): string {
+  const match = /^rgt_(\d+)_cycle_(\d+)_spot_(\d+)$/.exec(track);
+  if (!match) {
+    return track;
+  }
+  return `RGT ${Number(match[1])} · cycle ${Number(match[2])} · spot ${Number(match[3])}`;
+}
+
 async function initializeReprocessMode(manifest: ManifestPayload): Promise<void> {
   appMode = "reprocess";
+  showClassificationsLabel.textContent = "Class colors";
+  document.title = "ATL24 Bathymetry Cleaner";
+  appHeading.textContent = "ATL24 Bathymetry Cleaner";
   setupPanel.hidden = false;
   demPathLabel.hidden = false;
   showDemControl.hidden = false;
   showClassificationsControl.hidden = false;
+  classButtons.hidden = false;
+  labelingHeading.textContent = "Labeling";
   fileHeading.textContent = "Files";
   beamHeading.textContent = "Beams";
   configureLabelButtonsForMode("reprocess");
+  runProposal.hidden = false;
   runProposal.textContent = "Suggest from seeds";
   resetAtl24.hidden = false;
   saveLabelsButton.textContent = "Save cleaned H5";
@@ -649,14 +960,21 @@ function cacheCurrentReprocessLabels(): void {
 
 async function initializeTrainingMode(): Promise<void> {
   appMode = "training";
+  showClassificationsLabel.textContent = "Class colors";
+  document.title = "ATL24 Sidecar Labeler";
+  appHeading.textContent = "ATL24 Sidecar Labeler";
   setupPanel.hidden = true;
   demPathLabel.hidden = true;
   showDemControl.hidden = true;
+  showClassificationsControl.hidden = false;
+  classButtons.hidden = false;
+  labelingHeading.textContent = "Labeling";
   settings = { ...settings, showDem: false };
   updateShowDemButton();
   fileHeading.textContent = "To Label";
   beamHeading.textContent = "Labeled";
   configureLabelButtonsForMode("training");
+  runProposal.hidden = false;
   runProposal.textContent = "Run Proposal";
   resetAtl24.hidden = true;
   saveLabelsButton.textContent = "Done";
@@ -873,10 +1191,13 @@ async function applyLabelToSelectedRows(label: FinalLabel): Promise<void> {
   const nextLabels = labelSelectionWithMode(currentLabels, selectedRows, label);
   recordLabelHistory(nextLabels);
   currentLabels = nextLabels;
-  if (appMode === "reprocess") {
+  if (appMode === "reprocess" || appMode === "review") {
     cacheCurrentReprocessLabels();
   }
   updateDirtyStateForCurrentSelection();
+  if (appMode === "review") {
+    renderReviewSourceList();
+  }
   selectedRows = new Set();
   setStatus(`Set ${selectedCount.toLocaleString()} ${formatLabel(label).toLowerCase()} photons`);
   await rerender();
@@ -1120,6 +1441,18 @@ async function handleKeyboardShortcut(event: KeyboardEvent): Promise<void> {
     }
     return;
   }
+  if (
+    action === "previous_site" ||
+    action === "next_site" ||
+    action === "previous_track" ||
+    action === "next_track"
+  ) {
+    if (appMode === "review") {
+      event.preventDefault();
+      await navigateReview(action);
+    }
+    return;
+  }
   if (!currentPayload) {
     return;
   }
@@ -1157,6 +1490,8 @@ async function saveCurrentLabels(): Promise<void> {
   try {
     if (appMode === "reprocess") {
       await saveCurrentReprocessSource();
+    } else if (appMode === "review") {
+      await saveCurrentReviewTrack();
     } else {
       await saveCurrentTrainingSegment();
     }
@@ -1177,10 +1512,13 @@ async function undoLabelChange(): Promise<void> {
   labelHistory = undone.history;
   currentLabels = undone.labels;
   selectedRows = new Set();
-  if (appMode === "reprocess") {
+  if (appMode === "reprocess" || appMode === "review") {
     cacheCurrentReprocessLabels();
   }
   updateDirtyStateForCurrentSelection();
+  if (appMode === "review") {
+    renderReviewSourceList();
+  }
   setStatus("Undid label change");
   await rerender();
 }
@@ -1190,10 +1528,13 @@ async function redoLabelChange(): Promise<void> {
   labelHistory = redone.history;
   currentLabels = redone.labels;
   selectedRows = new Set();
-  if (appMode === "reprocess") {
+  if (appMode === "reprocess" || appMode === "review") {
     cacheCurrentReprocessLabels();
   }
   updateDirtyStateForCurrentSelection();
+  if (appMode === "review") {
+    renderReviewSourceList();
+  }
   setStatus("Redid label change");
   await rerender();
 }
@@ -1206,14 +1547,16 @@ function updateSelectionControls(): void {
   labelingControls.hidden = !hasPayload;
   actionControls.hidden = !hasPayload;
   clearSelectionButton.disabled = selectedRows.size === 0;
-  runProposal.disabled = !hasPayload;
+  runProposal.disabled = !hasPayload || appMode === "review";
   saveLabelsButton.disabled =
     !hasPayload || !saveable || saveInProgress || datasetLoading || datasetBlocksSave;
   saveLabelsButton.textContent = saveInProgress
     ? "Saving..."
     : appMode === "reprocess"
       ? "Save cleaned H5"
-      : "Done";
+      : appMode === "review"
+        ? "Save GeoPackage"
+        : "Done";
   saveLabelsButton.classList.toggle(
     "is-primary",
     hasPayload && saveable && !saveInProgress && !datasetLoading && !datasetBlocksSave,
@@ -1341,6 +1684,11 @@ function updateActiveSelectionDetail(): void {
     selectionDetail.textContent = emptyBeamSelectionDetail();
     return;
   }
+  if (appMode === "review") {
+    const saveState = isCurrentSelectionDirty() ? " · unsaved changes" : "";
+    selectionDetail.textContent = `${currentPayload.assigned.source_row.length.toLocaleString()} AOI photons · ${currentPayload.context.source_row.length.toLocaleString()} with context${saveState}`;
+    return;
+  }
   selectionDetail.textContent = selectionDetailText(
     currentPayload.assigned.source_row.length,
     currentLabels,
@@ -1349,6 +1697,9 @@ function updateActiveSelectionDetail(): void {
 }
 
 function currentSelectionKey(): string | null {
+  if (appMode === "review") {
+    return currentSource && currentBeam ? cacheKey(currentSource, currentBeam) : null;
+  }
   if (appMode === "reprocess") {
     return currentSource && currentBeam ? cacheKey(currentSource, currentBeam) : null;
   }
@@ -1368,6 +1719,9 @@ function isCurrentSelectionDirty(): boolean {
 }
 
 function hasSaveableChanges(): boolean {
+  if (appMode === "review") {
+    return isCurrentSelectionDirty();
+  }
   if (appMode !== "reprocess") {
     return isCurrentSelectionDirty();
   }
@@ -1477,7 +1831,7 @@ function updateClassModeButtons(): void {
   }
 }
 
-function configureLabelButtonsForMode(mode: AppMode): void {
+function configureLabelButtonsForMode(mode: "reprocess" | "training"): void {
   const options = labelsForAppMode(mode);
   if (activeLabel && !options.some((option) => option.label === activeLabel)) {
     activeLabel = null;

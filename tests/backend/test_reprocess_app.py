@@ -18,9 +18,13 @@ from rasterio.transform import from_origin
 def make_client(tmp_path: Path) -> tuple[TestClient, Path, Path]:
     input_dir = tmp_path / "inputs"
     output_dir = tmp_path / "outputs"
-    write_atl24_like_file(input_dir / "ATL24_sample.h5")
+    write_atl24_like_file(input_dir / "ATL24_20240102000000_01230701_001_01.h5")
     session = ReprocessSession()
-    return TestClient(create_reprocess_app(session=session)), input_dir, output_dir
+    return (
+        TestClient(create_reprocess_app(session=session)),
+        input_dir,
+        output_dir,
+    )
 
 
 def write_reference_dem(path: Path) -> None:
@@ -41,7 +45,9 @@ def write_reference_dem(path: Path) -> None:
         dataset.write(data, 1)
 
 
-def test_reprocess_session_endpoints_configure_load_propose_reset_and_save(tmp_path: Path) -> None:
+def test_reprocess_session_endpoints_configure_load_propose_reset_and_save(
+    tmp_path: Path,
+) -> None:
     client, input_dir, output_dir = make_client(tmp_path)
 
     configure = client.post(
@@ -54,12 +60,24 @@ def test_reprocess_session_endpoints_configure_load_propose_reset_and_save(tmp_p
     sources = client.get("/reprocess/sources")
     assert sources.status_code == 200
     source = sources.json()["sources"][0]
-    assert source["source_relative_path"] == "ATL24_sample.h5"
+    assert (
+        source["source_relative_path"]
+        == "ATL24_20240102000000_01230701_001_01.h5"
+    )
     assert source["beams"] == ["gt1l", "gt1r"]
     assert source["status"] == "unclassified"
-    assert source["beam_statuses"] == {"gt1l": "unclassified", "gt1r": "unclassified"}
+    assert source["beam_statuses"] == {
+        "gt1l": "unclassified",
+        "gt1r": "unclassified",
+    }
 
-    beam = client.get("/reprocess/beam", params={"source": "ATL24_sample.h5", "beam": "gt1l"})
+    beam = client.get(
+        "/reprocess/beam",
+        params={
+            "source": "ATL24_20240102000000_01230701_001_01.h5",
+            "beam": "gt1l",
+        },
+    )
     assert beam.status_code == 200
     beam_payload = beam.json()
     assert beam_payload["beam"]["photon_count"] == 150
@@ -70,7 +88,7 @@ def test_reprocess_session_endpoints_configure_load_propose_reset_and_save(tmp_p
     proposal = client.post(
         "/reprocess/proposal",
         json={
-            "source": "ATL24_sample.h5",
+            "source": "ATL24_20240102000000_01230701_001_01.h5",
             "beam": "gt1l",
             "seeds": [
                 {"source_row": 0, "label": "surface", "label_source": "manual"},
@@ -81,17 +99,27 @@ def test_reprocess_session_endpoints_configure_load_propose_reset_and_save(tmp_p
     assert proposal.status_code == 200
     assert proposal.json()["rows"][-1]["label_source"] == "manual"
 
-    reset = client.post("/reprocess/reset", json={"source": "ATL24_sample.h5", "beam": "gt1l"})
+    reset = client.post(
+        "/reprocess/reset",
+        json={
+            "source": "ATL24_20240102000000_01230701_001_01.h5",
+            "beam": "gt1l",
+        },
+    )
     assert reset.status_code == 200
     assert reset.json()["rows"][149]["label"] == "no_label"
 
     save = client.post(
         "/reprocess/save",
         json={
-            "source": "ATL24_sample.h5",
+            "source": "ATL24_20240102000000_01230701_001_01.h5",
             "beam_labels": {
                 "gt1l": [
-                    {"source_row": 0, "label": "bathy", "label_source": "manual"},
+                    {
+                        "source_row": 0,
+                        "label": "bathy",
+                        "label_source": "manual",
+                    },
                     *beam_payload["labels"][1:],
                 ]
             },
@@ -99,12 +127,19 @@ def test_reprocess_session_endpoints_configure_load_propose_reset_and_save(tmp_p
     )
     assert save.status_code == 200
     assert save.json()["written_beams"] == ["gt1l"]
-    assert Path(save.json()["outputs"][0]["output_path"]).name == "ATL24_sample_gt1l_manual.h5"
+    assert Path(save.json()["outputs"][0]["output_path"]).name == (
+        "20240102_rgt1234_cycle007_spot6.gpkg"
+    )
     assert save.json()["source_status"]["status"] == "partial"
-    assert save.json()["source_status"]["beam_statuses"] == {"gt1l": "complete", "gt1r": "unclassified"}
+    assert save.json()["source_status"]["beam_statuses"] == {
+        "gt1l": "complete",
+        "gt1r": "unclassified",
+    }
 
 
-def test_reprocess_dem_sample_endpoint_returns_reference_profile(tmp_path: Path) -> None:
+def test_reprocess_dem_sample_endpoint_returns_reference_profile(
+    tmp_path: Path,
+) -> None:
     client, input_dir, output_dir = make_client(tmp_path)
     dem_path = tmp_path / "reference_dem.tif"
     write_reference_dem(dem_path)
@@ -116,12 +151,16 @@ def test_reprocess_dem_sample_endpoint_returns_reference_profile(tmp_path: Path)
 
     response = client.post(
         "/reprocess/dem-sample",
-        json={"source": "ATL24_sample.h5", "beam": "gt1l", "dem_path": str(dem_path)},
+        json={
+            "source": "ATL24_20240102000000_01230701_001_01.h5",
+            "beam": "gt1l",
+            "dem_path": str(dem_path),
+        },
     )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["source"] == "ATL24_sample.h5"
+    assert payload["source"] == "ATL24_20240102000000_01230701_001_01.h5"
     assert payload["beam"] == "gt1l"
     assert payload["dem"]["dem_name"] == "reference_dem.tif"
     assert payload["dem"]["sample_count"] == 150
