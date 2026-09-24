@@ -20,6 +20,6 @@ test("save status summarizes multiple per-beam output files", () => {
         { beam: "gt1r", output_path: "/tmp/out/ATL24_sample_gt1r_manual.h5" },
       ],
     }),
-    "Saved 2 beam H5 files",
+    "Saved 2 GeoPackages",
   );
 });

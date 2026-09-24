@@ -1,6 +1,5 @@
 export type FinalLabel = "surface" | "bathy" | "no_label";
 export type LabelSource = "manual" | "auto";
-export type SegmentStatus = "unlabeled" | "draft" | "complete" | "stale" | "conflict";
 export type ReprocessBeamStatus = "complete" | "unclassified" | "invalid";
 export type ReprocessFileStatus = ReprocessBeamStatus | "partial";
 export type ReprocessLabelOrigin = "manual_output" | "atl24_original" | "raw_unclassified";
@@ -11,23 +10,11 @@ export interface LabelRow {
   label_source: LabelSource;
 }
 
-export interface SegmentSummary {
+/** The along-track extent the profile highlights for one beam or track. */
+export interface SegmentExtent {
   segment_id: string;
-  inventory_version: string;
-  segment_config_version: string;
-  stable_source_file_id: string;
-  source_relative_path: string;
-  source_label: string | null;
-  file_name: string;
-  beam: string;
   x_atc_start_m: number;
   x_atc_end_m: number;
-  context_x_atc_start_m: number;
-  context_x_atc_end_m: number;
-  photon_count: number;
-  day_night: "day" | "night";
-  beam_strength: "strong" | "weak";
-  status: SegmentStatus;
 }
 
 export interface PhotonTable {
@@ -43,7 +30,7 @@ export interface PhotonTable {
 }
 
 export interface SegmentPayload {
-  segment: SegmentSummary;
+  segment: SegmentExtent;
   assigned: PhotonTable;
   context: PhotonTable;
   aoi_geometry?: GeoJsonPolygon | GeoJsonMultiPolygon;

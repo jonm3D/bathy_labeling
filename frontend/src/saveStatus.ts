@@ -6,7 +6,7 @@ export function reprocessSaveStatusText(saved: ReprocessSaveStatusPayload): stri
   if (saved.outputs.length === 1) {
     return `Saved ${fileName(saved.outputs[0].output_path)}`;
   }
-  return `Saved ${saved.outputs.length.toLocaleString()} beam H5 files`;
+  return `Saved ${saved.outputs.length.toLocaleString()} GeoPackages`;
 }
 
 function fileName(path: string): string {

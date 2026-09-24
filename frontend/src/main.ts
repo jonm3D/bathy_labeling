@@ -145,7 +145,7 @@ let currentDemSample: DemSamplePayload | null = null;
 let currentDemKey: string | null = null;
 let currentSource: string | null = null;
 let currentBeam: string | null = null;
-let selectedReprocessSource: string | null = null;
+let selectedSource: string | null = null;
 let fullProfileRange: DistanceRange | null = null;
 let currentProfileRange: DistanceRange | null = null;
 let profileXReversed = false;
@@ -154,7 +154,7 @@ let removeMapCameraListener: (() => void) | null = null;
 let ignoreNextMapCameraChange = false;
 let ignoreMapCameraChangeToken = 0;
 let ignoreProfileRelayout = false;
-const reprocessLabelCache = new Map<string, LabelRow[]>();
+const labelCache = new Map<string, LabelRow[]>();
 let outputPathWasEdited = false;
 let datasetEditing = true;
 let datasetLoading = false;
@@ -169,6 +169,12 @@ const RECENT_PATH_STORAGE_KEYS: Record<RecentPathKind, string> = {
   input: "bathy-labeler.recentInputPaths",
   output: "bathy-labeler.recentOutputPaths",
   dem: "bathy-labeler.recentDemPaths",
+};
+
+const LABEL_SHORTCUT_TITLES: Record<FinalLabel, string> = {
+  surface: "Surface (1)",
+  bathy: "Bathy (2)",
+  no_label: "Erase (3)",
 };
 
 configureLabelButtons();
@@ -277,7 +283,7 @@ resetAtl24.addEventListener("click", async () => {
   recordLabelHistory(reset.rows);
   currentLabels = reset.rows;
   selectedRows = new Set();
-  cacheCurrentReprocessLabels();
+  cacheCurrentLabels();
   updateDirtyStateForCurrentSelection();
   setStatus("Reset to ATL24");
   await rerender();
@@ -367,7 +373,7 @@ function handleBootError(error: unknown): void {
   fileList.replaceChildren();
   beamList.replaceChildren();
   setDatasetEditing(true);
-  const message = `Backend unavailable: ${formatErrorMessage(error)}`;
+  const message = `Backend unavailable: ${errorMessage(error)}`;
   setDatasetStatus(message);
   setStatus(message);
 }
@@ -385,7 +391,6 @@ async function initializeReviewMode(manifest: ManifestPayload): Promise<void> {
   labelingHeading.textContent = "Labeling";
   runProposal.hidden = true;
   resetAtl24.hidden = true;
-  saveLabelsButton.textContent = "Save GeoPackage";
   emptyWorkflow.textContent = "Select a site and track to classify";
   fileHeading.textContent = "Sites";
   beamHeading.textContent = "Tracks";
@@ -399,7 +404,7 @@ async function loadReviewSources(contextMarginM: number): Promise<void> {
   reviewSources = payload.sources;
   segmentCount.textContent = `${payload.count.toLocaleString()} sites · ${formatKm(contextMarginM)} km context · ↑/↓ sites · ←/→ tracks`;
   const first = reviewSources.find((source) => source.beams.length > 0) ?? reviewSources[0];
-  selectedReprocessSource = first?.source_relative_path ?? null;
+  selectedSource = first?.source_relative_path ?? null;
   renderReviewSourceList();
   if (first?.beams[0]) {
     await selectReviewTrack(first.source_relative_path, first.beams[0]);
@@ -410,8 +415,8 @@ async function loadReviewSources(contextMarginM: number): Promise<void> {
 
 function renderReviewSourceList(): void {
   fileList.replaceChildren(...reviewSources.map(reviewSourceButton));
-  renderReviewTrackList(selectedReprocessSource);
-  updateReviewSelectionButtons();
+  renderReviewTrackList(selectedSource);
+  updateSelectionButtons();
 }
 
 function renderReviewTrackList(sourceId: string | null): void {
@@ -433,19 +438,19 @@ function renderReviewTrackList(sourceId: string | null): void {
 }
 
 function reviewSourceButton(source: ReviewSource): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "segment-button";
-  button.dataset.source = source.source_relative_path;
   const dirtyCount = source.beams.filter((track) =>
     dirtySelections.has(cacheKey(source.source_relative_path, track)),
   ).length;
   const dirtyText = dirtyCount > 0 ? ` · ${dirtyCount.toLocaleString()} unsaved` : "";
-  button.innerHTML = `<span>${source.file_name}</span><small>${source.beam_count.toLocaleString()} tracks · ${source.aoi_photon_count.toLocaleString()} photons · ${source.annotated_track_count.toLocaleString()} saved${dirtyText}</small>`;
+  const button = listButton(
+    source.file_name,
+    `${source.beam_count.toLocaleString()} tracks · ${source.aoi_photon_count.toLocaleString()} photons · ${source.annotated_track_count.toLocaleString()} saved${dirtyText}`,
+  );
+  button.dataset.source = source.source_relative_path;
   button.addEventListener("click", () => {
-    selectedReprocessSource = source.source_relative_path;
+    selectedSource = source.source_relative_path;
     renderReviewTrackList(source.source_relative_path);
-    updateReviewSelectionButtons();
+    updateSelectionButtons();
     if (source.beams[0]) {
       void selectReviewTrack(source.source_relative_path, source.beams[0]);
     } else {
@@ -456,11 +461,6 @@ function reviewSourceButton(source: ReviewSource): HTMLButtonElement {
 }
 
 function reviewTrackButton(source: ReviewSource, track: string): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "segment-button";
-  button.dataset.source = source.source_relative_path;
-  button.dataset.beam = track;
   const photonCount = source.track_photon_counts[track] ?? 0;
   const closestDistance = source.track_closest_distances_m[track];
   const distanceText = closestDistance == null ? "distance unavailable" : `${closestDistance.toFixed(1)} m closest`;
@@ -473,7 +473,12 @@ function reviewTrackButton(source: ReviewSource, track: string): HTMLButtonEleme
     : source.track_statuses[track] === "annotated"
       ? "saved"
       : "unlabeled";
-  button.innerHTML = `<span>${formatTrackKey(track)}</span><small>${priorityText}${distanceText} · ${photonCount.toLocaleString()} AOI photons · ${status}</small>`;
+  const button = listButton(
+    formatTrackKey(track),
+    `${priorityText}${distanceText} · ${photonCount.toLocaleString()} AOI photons · ${status}`,
+  );
+  button.dataset.source = source.source_relative_path;
+  button.dataset.beam = track;
   if (reviewNote) {
     const note = document.createElement("small");
     note.className = "track-review-note";
@@ -490,9 +495,9 @@ async function selectReviewTrack(source: string, track: string): Promise<void> {
   const switchToken = beginPayloadSwitch();
   setStatus("Loading track");
   try {
-    selectedReprocessSource = source;
+    selectedSource = source;
     renderReviewTrackList(source);
-    updateReviewSelectionButtons();
+    updateSelectionButtons();
     const payload = await fetchReviewTrack(source, track);
     if (!payloadSwitchGuard.isCurrent(switchToken)) {
       return;
@@ -502,7 +507,7 @@ async function selectReviewTrack(source: string, track: string): Promise<void> {
     currentPayload = segmentPayloadFromReviewTrack(payload);
     setActiveProfileRange(currentPayload);
     currentLabels = cloneLabels(
-      reprocessLabelCache.get(cacheKey(source, track)) ?? payload.labels,
+      labelCache.get(cacheKey(source, track)) ?? payload.labels,
     );
     const selectionKey = currentSelectionKey();
     if (selectionKey && !labelBaselines.has(selectionKey)) {
@@ -522,7 +527,7 @@ async function selectReviewTrack(source: string, track: string): Promise<void> {
     const noteText = reviewNote ? ` · ${reviewNote}` : "";
     selectionDetail.textContent = `Track ${trackIndex + 1} of ${payload.source.beams.length}${distanceText} · ${payload.beam.photon_count.toLocaleString()} AOI photons · ${payload.beam.context_photon_count.toLocaleString()} with context${noteText}`;
     selectionDetail.title = reviewNote ?? "";
-    updateReviewSelectionButtons();
+    updateSelectionButtons();
     updateSelectionControls();
     await rerender();
     if (!payloadSwitchGuard.isCurrent(switchToken)) {
@@ -554,7 +559,7 @@ async function saveCurrentReviewTrack(): Promise<void> {
     return;
   }
   currentLabels = cloneLabels(saved.labels);
-  reprocessLabelCache.set(cacheKey(source, track), cloneLabels(saved.labels));
+  labelCache.set(cacheKey(source, track), cloneLabels(saved.labels));
   markCurrentSelectionSaved();
   reviewSources = reviewSources.map((candidate) =>
     candidate.source_relative_path === source ? saved.source_status : candidate,
@@ -568,21 +573,8 @@ function segmentPayloadFromReviewTrack(payload: ReviewTrackPayload): SegmentPayl
   return {
     segment: {
       segment_id: `${payload.beam.source_relative_path}::${payload.beam.beam}`,
-      inventory_version: `sliderule-${payload.source.product}-geoparquet-v1`,
-      segment_config_version: "aoi-plus-context",
-      stable_source_file_id: payload.beam.source_relative_path,
-      source_relative_path: payload.beam.source_relative_path,
-      source_label: payload.source.source_label,
-      file_name: payload.beam.file_name,
-      beam: payload.beam.beam,
       x_atc_start_m: payload.beam.x_atc_start_m,
       x_atc_end_m: payload.beam.x_atc_end_m,
-      context_x_atc_start_m: payload.beam.context_x_atc_start_m,
-      context_x_atc_end_m: payload.beam.context_x_atc_end_m,
-      photon_count: payload.beam.photon_count,
-      day_night: payload.beam.day_night,
-      beam_strength: payload.beam.beam_strength,
-      status: "unlabeled",
     },
     assigned: payload.assigned,
     context: payload.context,
@@ -594,7 +586,7 @@ function segmentPayloadFromReviewTrack(payload: ReviewTrackPayload): SegmentPayl
 
 function showEmptyReviewSite(siteName: string): void {
   currentPayload = null;
-  currentSource = selectedReprocessSource;
+  currentSource = selectedSource;
   currentBeam = null;
   currentLabels = [];
   selectedRows = new Set();
@@ -608,15 +600,12 @@ function showEmptyReviewSite(siteName: string): void {
   updateSelectionControls();
 }
 
-function updateReviewSelectionButtons(): void {
+function updateSelectionButtons(): void {
   for (const button of fileList.querySelectorAll<HTMLButtonElement>("button[data-source]")) {
-    button.classList.toggle("is-selected", button.dataset.source === selectedReprocessSource);
+    button.classList.toggle("is-selected", button.dataset.source === selectedSource);
   }
   for (const button of beamList.querySelectorAll<HTMLButtonElement>("button[data-beam]")) {
-    button.classList.toggle(
-      "is-selected",
-      button.dataset.source === currentSource && button.dataset.beam === currentBeam,
-    );
+    button.classList.toggle("is-selected", button.dataset.source === currentSource && button.dataset.beam === currentBeam);
   }
 }
 
@@ -624,7 +613,7 @@ async function navigateReview(action: "previous_site" | "next_site" | "previous_
   if (appMode !== "review" || reviewSources.length === 0 || payloadSwitchGuard.isSwitching()) {
     return;
   }
-  const sourceId = currentSource ?? selectedReprocessSource ?? reviewSources[0].source_relative_path;
+  const sourceId = currentSource ?? selectedSource ?? reviewSources[0].source_relative_path;
   const sourceIndex = Math.max(
     0,
     reviewSources.findIndex((source) => source.source_relative_path === sourceId),
@@ -633,9 +622,9 @@ async function navigateReview(action: "previous_site" | "next_site" | "previous_
   if (action === "previous_site" || action === "next_site") {
     const offset = action === "previous_site" ? -1 : 1;
     const nextSource = reviewSources[(sourceIndex + offset + reviewSources.length) % reviewSources.length];
-    selectedReprocessSource = nextSource.source_relative_path;
+    selectedSource = nextSource.source_relative_path;
     renderReviewTrackList(nextSource.source_relative_path);
-    updateReviewSelectionButtons();
+    updateSelectionButtons();
     if (nextSource.beams[0]) {
       await selectReviewTrack(nextSource.source_relative_path, nextSource.beams[0]);
     } else {
@@ -678,7 +667,6 @@ async function initializeReprocessMode(manifest: ManifestPayload): Promise<void>
   runProposal.hidden = false;
   runProposal.textContent = "Suggest from seeds";
   resetAtl24.hidden = false;
-  saveLabelsButton.textContent = "Save cleaned H5";
   inputDir.value = manifest.input_dir ?? "";
   outputDir.value = manifest.output_dir ?? manifest.suggested_output_dir ?? defaultOutputDir(inputDir.value);
   outputPathWasEdited = Boolean(manifest.output_dir) && outputDir.value !== defaultOutputDir(inputDir.value);
@@ -720,7 +708,7 @@ async function configureAndLoadReprocessSession(): Promise<void> {
     await configureReprocessSession(draft.inputPath, draft.outputPath);
     rememberCurrentPaths();
     setDatasetEditing(false);
-    reprocessLabelCache.clear();
+    labelCache.clear();
     labelBaselines.clear();
     dirtySelections.clear();
     currentPayload = null;
@@ -731,10 +719,10 @@ async function configureAndLoadReprocessSession(): Promise<void> {
     currentDemKey = null;
     updateSelectionControls();
     updateShowDemButton();
-    selectedReprocessSource = null;
+    selectedSource = null;
     await loadReprocessSources();
   } catch (error) {
-    failureMessage = `Load failed: ${formatErrorMessage(error)}`;
+    failureMessage = `Load failed: ${errorMessage(error)}`;
     setDatasetEditing(true);
   } finally {
     datasetLoading = false;
@@ -752,7 +740,7 @@ async function loadReprocessSources(): Promise<void> {
   segmentCount.textContent = `${payload.count.toLocaleString()} files`;
   setDatasetStatus("Loaded");
   const first = reprocessSources[0];
-  selectedReprocessSource = first?.source_relative_path ?? null;
+  selectedSource = first?.source_relative_path ?? null;
   renderReprocessSourceList();
   if (first?.beams[0]) {
     await selectReprocessBeam(first.source_relative_path, first.beams[0]);
@@ -768,8 +756,8 @@ async function loadReprocessSources(): Promise<void> {
 
 function renderReprocessSourceList(): void {
   fileList.replaceChildren(...reprocessSources.map(reprocessFileButton));
-  renderReprocessBeamList(selectedReprocessSource);
-  updateReprocessSelectionButtons();
+  renderReprocessBeamList(selectedSource);
+  updateSelectionButtons();
 }
 
 function renderReprocessBeamList(sourceRelativePath: string | null): void {
@@ -779,20 +767,17 @@ function renderReprocessBeamList(sourceRelativePath: string | null): void {
     return;
   }
   beamList.replaceChildren(...source.beams.map((beam) => reprocessBeamButton(source, beam)));
-  updateReprocessSelectionButtons();
+  updateSelectionButtons();
 }
 
 function reprocessFileButton(source: ReprocessSource): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "segment-button";
+  const button = listButton(source.file_name, `${reprocessFileStatusText(source)} · ${source.source_relative_path}`);
   button.classList.add(reprocessFileStatusClass(source.status));
   button.dataset.source = source.source_relative_path;
-  button.innerHTML = `<span>${source.file_name}</span><small>${reprocessFileStatusText(source)} · ${source.source_relative_path}</small>`;
   button.addEventListener("click", () => {
-    selectedReprocessSource = source.source_relative_path;
+    selectedSource = source.source_relative_path;
     renderReprocessBeamList(source.source_relative_path);
-    updateReprocessSelectionButtons();
+    updateSelectionButtons();
     if (source.beams[0]) {
       void selectReprocessBeam(source.source_relative_path, source.beams[0]);
     }
@@ -801,14 +786,11 @@ function reprocessFileButton(source: ReprocessSource): HTMLButtonElement {
 }
 
 function reprocessBeamButton(source: ReprocessSource, beam: string): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "segment-button";
   const status = source.beam_statuses[beam] ?? "unclassified";
+  const button = listButton(beam, `${reprocessBeamStatusText(status)} · ${source.file_name}`);
   button.classList.add(reprocessBeamStatusClass(status));
   button.dataset.source = source.source_relative_path;
   button.dataset.beam = beam;
-  button.innerHTML = `<span>${beam}</span><small>${reprocessBeamStatusText(status)} · ${source.file_name}</small>`;
   button.addEventListener("click", () => {
     void selectReprocessBeam(source.source_relative_path, beam);
   });
@@ -819,9 +801,9 @@ async function selectReprocessBeam(source: string, beam: string): Promise<void> 
   const switchToken = beginPayloadSwitch();
   setStatus("Loading beam");
   try {
-    selectedReprocessSource = source;
+    selectedSource = source;
     renderReprocessBeamList(source);
-    updateReprocessSelectionButtons();
+    updateSelectionButtons();
     const payload = await fetchReprocessBeam(source, beam);
     if (!payloadSwitchGuard.isCurrent(switchToken)) {
       return;
@@ -830,7 +812,7 @@ async function selectReprocessBeam(source: string, beam: string): Promise<void> 
     currentBeam = beam;
     currentPayload = segmentPayloadFromBeam(payload);
     setActiveProfileRange(currentPayload);
-    currentLabels = cloneLabels(reprocessLabelCache.get(cacheKey(source, beam)) ?? payload.labels);
+    currentLabels = cloneLabels(labelCache.get(cacheKey(source, beam)) ?? payload.labels);
     const selectionKey = currentSelectionKey();
     if (selectionKey && !labelBaselines.has(selectionKey)) {
       labelBaselines.set(selectionKey, cloneLabels(payload.labels));
@@ -843,7 +825,7 @@ async function selectReprocessBeam(source: string, beam: string): Promise<void> 
     mapView.setSegment(currentPayload, { fit: !isMapSyncEnabled() });
     activeSegment.textContent = `${payload.beam.file_name} ${beam}`;
     updateActiveSelectionDetail();
-    updateReprocessSelectionButtons();
+    updateSelectionButtons();
     updateShowDemButton();
     const demStatus = settings.showDem ? await loadDemForCurrentBeam() : null;
     if (!payloadSwitchGuard.isCurrent(switchToken)) {
@@ -864,21 +846,8 @@ function segmentPayloadFromBeam(payload: ReprocessBeamPayload): SegmentPayload {
   return {
     segment: {
       segment_id: `${payload.beam.source_relative_path}::${payload.beam.beam}`,
-      inventory_version: "reprocess-full-beam-v1",
-      segment_config_version: "full-track",
-      stable_source_file_id: payload.beam.source_relative_path,
-      source_relative_path: payload.beam.source_relative_path,
-      source_label: payload.source.source_label,
-      file_name: payload.beam.file_name,
-      beam: payload.beam.beam,
       x_atc_start_m: payload.beam.x_atc_start_m,
       x_atc_end_m: payload.beam.x_atc_end_m,
-      context_x_atc_start_m: payload.beam.x_atc_start_m,
-      context_x_atc_end_m: payload.beam.x_atc_end_m,
-      photon_count: payload.beam.photon_count,
-      day_night: payload.beam.day_night,
-      beam_strength: payload.beam.beam_strength,
-      status: "unlabeled",
     },
     assigned: payload.photons,
     context: payload.photons,
@@ -906,7 +875,7 @@ async function runReprocessProposal(): Promise<void> {
   recordLabelHistory(nextLabels);
   currentLabels = nextLabels;
   selectedRows = new Set();
-  cacheCurrentReprocessLabels();
+  cacheCurrentLabels();
   updateDirtyStateForCurrentSelection();
   setStatus(`Suggestion ready: ${countLabels(currentLabels)}`);
   await rerender();
@@ -917,9 +886,9 @@ async function saveCurrentReprocessSource(): Promise<void> {
     return;
   }
   const source = currentSource;
-  cacheCurrentReprocessLabels();
-  const labelsByBeam = dirtyBeamLabelsForSource(source, reprocessLabelCache, dirtySelections);
-  setStatus("Saving H5");
+  cacheCurrentLabels();
+  const labelsByBeam = dirtyBeamLabelsForSource(source, labelCache, dirtySelections);
+  setStatus("Saving GeoPackages");
   const saved = await saveReprocessSource(source, labelsByBeam);
   applyReprocessSourceStatus(saved.source_status);
   markReprocessSourceSaved(source, labelsByBeam);
@@ -936,9 +905,9 @@ function applyReprocessSourceStatus(source: ReprocessSource): void {
   renderReprocessSourceList();
 }
 
-function cacheCurrentReprocessLabels(): void {
+function cacheCurrentLabels(): void {
   if (currentSource && currentBeam) {
-    reprocessLabelCache.set(cacheKey(currentSource, currentBeam), cloneLabels(currentLabels));
+    labelCache.set(cacheKey(currentSource, currentBeam), cloneLabels(currentLabels));
   }
 }
 
@@ -1024,15 +993,13 @@ async function applyLabelToSelectedRows(label: FinalLabel): Promise<void> {
   const nextLabels = labelSelectionWithMode(currentLabels, selectedRows, label);
   recordLabelHistory(nextLabels);
   currentLabels = nextLabels;
-  if (appMode === "reprocess" || appMode === "review") {
-    cacheCurrentReprocessLabels();
-  }
+  cacheCurrentLabels();
   updateDirtyStateForCurrentSelection();
   if (appMode === "review") {
     renderReviewSourceList();
   }
   selectedRows = new Set();
-  setStatus(`Set ${selectedCount.toLocaleString()} ${formatLabel(label).toLowerCase()} photons`);
+  setStatus(`Set ${selectedCount.toLocaleString()} ${labelDisplayName(label).toLowerCase()} photons`);
   await rerender();
 }
 
@@ -1238,7 +1205,7 @@ async function setActiveLabelMode(label: FinalLabel): Promise<void> {
     await applyLabelToSelectedRows(activeLabel);
     return;
   }
-  setStatus(activeLabel ? `${formatLabel(activeLabel)} mode` : "Label mode off");
+  setStatus(activeLabel ? `${labelDisplayName(activeLabel)} mode` : "Label mode off");
 }
 
 async function handleKeyboardShortcut(event: KeyboardEvent): Promise<void> {
@@ -1331,6 +1298,7 @@ async function saveCurrentLabels(): Promise<void> {
   } finally {
     saveInProgress = false;
     updateDatasetControls();
+    updateSelectionControls();
   }
 }
 
@@ -1343,9 +1311,7 @@ async function undoLabelChange(): Promise<void> {
   labelHistory = undone.history;
   currentLabels = undone.labels;
   selectedRows = new Set();
-  if (appMode === "reprocess" || appMode === "review") {
-    cacheCurrentReprocessLabels();
-  }
+  cacheCurrentLabels();
   updateDirtyStateForCurrentSelection();
   if (appMode === "review") {
     renderReviewSourceList();
@@ -1359,9 +1325,7 @@ async function redoLabelChange(): Promise<void> {
   labelHistory = redone.history;
   currentLabels = redone.labels;
   selectedRows = new Set();
-  if (appMode === "reprocess" || appMode === "review") {
-    cacheCurrentReprocessLabels();
-  }
+  cacheCurrentLabels();
   updateDirtyStateForCurrentSelection();
   if (appMode === "review") {
     renderReviewSourceList();
@@ -1384,7 +1348,7 @@ function updateSelectionControls(): void {
   saveLabelsButton.textContent = saveInProgress
     ? "Saving..."
     : appMode === "reprocess"
-      ? "Save cleaned H5"
+      ? "Save GeoPackages"
       : "Save GeoPackage";
   saveLabelsButton.classList.toggle(
     "is-primary",
@@ -1422,10 +1386,6 @@ function updateDatasetControls(): void {
 
 function setDatasetStatus(message: string): void {
   datasetStatus.textContent = message;
-}
-
-function formatErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function updatePathError(input: HTMLInputElement, errorElement: HTMLElement, message: string | undefined): void {
@@ -1578,7 +1538,7 @@ function markReprocessSourceSaved(source: string, savedLabelsByBeam: Record<stri
   for (const [beam, savedLabels] of Object.entries(savedLabelsByBeam)) {
     const key = cacheKey(source, beam);
     labelBaselines.set(key, cloneLabels(savedLabels));
-    const cachedLabels = reprocessLabelCache.get(key);
+    const cachedLabels = labelCache.get(key);
     if (cachedLabels && labelsEqual(cachedLabels, savedLabels)) {
       dirtySelections.delete(key);
     } else {
@@ -1637,7 +1597,7 @@ function countLabels(labels: LabelRow[]): string {
   }
   return Array.from(counts.entries())
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([label, count]) => `${formatLabel(label).toLowerCase()} ${count}`)
+    .map(([label, count]) => `${labelDisplayName(label).toLowerCase()} ${count}`)
     .join(", ");
 }
 
@@ -1669,30 +1629,20 @@ function labelModeButton(option: LabelModeOption): HTMLButtonElement {
   const text = document.createElement("span");
   text.textContent = option.text;
   button.replaceChildren(swatch, text);
-  button.title = labelShortcutTitle(option.label);
+  button.title = LABEL_SHORTCUT_TITLES[option.label];
   return button;
 }
 
-function labelShortcutTitle(label: FinalLabel): string {
-  if (label === "surface") {
-    return "Surface (1)";
-  }
-  if (label === "bathy") {
-    return "Bathy (2)";
-  }
-  if (label === "no_label") {
-    return "Erase (3)";
-  }
-  return labelDisplayName(label);
-}
-
-function updateReprocessSelectionButtons(): void {
-  for (const button of fileList.querySelectorAll<HTMLButtonElement>(".segment-button[data-source]")) {
-    button.classList.toggle("is-selected", button.dataset.source === selectedReprocessSource);
-  }
-  for (const button of beamList.querySelectorAll<HTMLButtonElement>(".segment-button[data-source][data-beam]")) {
-    button.classList.toggle("is-selected", button.dataset.source === currentSource && button.dataset.beam === currentBeam);
-  }
+function listButton(title: string, detail: string): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "segment-button";
+  const titleElement = document.createElement("span");
+  titleElement.textContent = title;
+  const detailElement = document.createElement("small");
+  detailElement.textContent = detail;
+  button.append(titleElement, detailElement);
+  return button;
 }
 
 function cacheKey(source: string, beam: string): string {
@@ -1701,10 +1651,6 @@ function cacheKey(source: string, beam: string): string {
 
 function cloneLabels(labels: LabelRow[]): LabelRow[] {
   return labels.map((row) => ({ ...row }));
-}
-
-function formatLabel(label: FinalLabel): string {
-  return labelDisplayName(label);
 }
 
 function formatKm(meters: number): string {

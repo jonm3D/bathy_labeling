@@ -79,7 +79,7 @@ cd ..
 ```bash
 uv run --cache-dir .uv-cache bathy-labeler \
   --input /path/to/ATL24_folder \
-  --output /path/to/ATL24_folder_cleaned
+  --output /path/to/ATL24_folder_labeled
 ```
 
 Open the local URL printed by `uvicorn`, usually:
