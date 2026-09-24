@@ -56,13 +56,13 @@ def test_seeded_proposal_does_not_invent_unseeded_semantic_classes(tmp_path: Pat
     proposal = generate_seeded_proposal(photons, photons, "weak", seeds)
 
     labels = {row["label"] for row in proposal.rows}
-    assert labels <= {"surface", "noise"}
+    assert labels <= {"surface", "no_label"}
     assert proposal.rows[0] == {
         "source_row": photons.source_row[0],
         "label": "surface",
         "label_source": "manual",
     }
-    assert proposal.rows[-1]["label"] == "noise"
+    assert proposal.rows[-1]["label"] == "no_label"
     assert proposal.rows[-1]["label_source"] == "auto"
 
 
@@ -80,9 +80,7 @@ def test_seeded_proposal_keeps_seeded_photons_fixed_and_uses_seeded_classes(tmp_
     assert proposal.rows[-1]["label"] == "bathy"
     assert proposal.rows[-1]["label_source"] == "manual"
     labels = {row["label"] for row in proposal.rows}
-    assert labels <= {"surface", "bathy", "noise"}
-    assert "land" not in labels
-    assert "ambiguous" not in labels
+    assert labels <= {"surface", "bathy", "no_label"}
     assert proposal.metadata["per_class_seed_counts"] == {"bathy": 1, "surface": 1}
     assert proposal.metadata["proposal_class_counts"]["surface"] >= 1
     assert proposal.metadata["proposal_class_counts"]["bathy"] >= 1

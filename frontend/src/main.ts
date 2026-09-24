@@ -1752,12 +1752,5 @@ function requireDataList(id: string): HTMLDataListElement {
 }
 
 function isFinalLabel(value: string | undefined): value is FinalLabel {
-  return (
-    value === "surface" ||
-    value === "bathy" ||
-    value === "no_label" ||
-    value === "land" ||
-    value === "noise" ||
-    value === "ambiguous"
-  );
+  return LABEL_OPTIONS.some((option) => option.label === value);
 }

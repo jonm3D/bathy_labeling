@@ -6,11 +6,17 @@ from typing import Literal
 BEAM_NAMES = ("gt1l", "gt1r", "gt2l", "gt2r", "gt3l", "gt3r")
 REQUIRED_DATASETS = ("lon_ph", "lat_ph", "x_atc", "ortho_h", "surface_h", "index_ph", "night_flag")
 OPTIONAL_DATASETS = ("class_ph",)
-FINAL_LABELS = ("surface", "bathy", "no_label", "land", "noise", "ambiguous")
+FINAL_LABELS = ("surface", "bathy", "no_label")
 LABEL_SOURCES = ("manual", "auto")
 
 BeamStrength = Literal["strong", "weak"]
-FinalLabel = Literal["surface", "bathy", "no_label", "land", "noise", "ambiguous"]
+FinalLabel = Literal["surface", "bathy", "no_label"]
+
+LABEL_TO_CLASS_PH: dict[FinalLabel, int] = {
+    "surface": 41,
+    "bathy": 40,
+    "no_label": 0,
+}
 
 
 @dataclass(frozen=True)
@@ -42,3 +48,25 @@ class PhotonTable:
             "atl24_class_ph": self.atl24_class_ph,
         }
 
+
+
+def label_from_class_ph(class_ph: int | None) -> FinalLabel:
+    if class_ph == 41:
+        return "surface"
+    if class_ph == 40:
+        return "bathy"
+    return "no_label"
+
+
+def labels_from_atl24_classes(
+    source_rows: list[int],
+    atl24_class_ph: list[int | None],
+) -> list[dict[str, int | str]]:
+    return [
+        {
+            "source_row": int(source_row),
+            "label": label_from_class_ph(class_ph),
+            "label_source": "auto",
+        }
+        for source_row, class_ph in zip(source_rows, atl24_class_ph)
+    ]

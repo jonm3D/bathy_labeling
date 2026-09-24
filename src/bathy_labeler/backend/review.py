@@ -22,10 +22,8 @@ from bathy_labeler.backend.classified_output import (
 from bathy_labeler.backend.models import (
     FINAL_LABELS,
     LABEL_SOURCES,
-    PhotonTable,
-)
-from bathy_labeler.backend.reprocess import (
     LABEL_TO_CLASS_PH,
+    PhotonTable,
     label_from_class_ph,
     labels_from_atl24_classes,
 )

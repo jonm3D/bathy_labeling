@@ -10,9 +10,8 @@ test("classification colors keep bathy distinct from danger red", () => {
 });
 
 test("class color lookup exposes swatch colors for label buttons", () => {
-  assert.equal(CLASS_COLORS.land, "#8f6b3f");
   assert.equal(CLASS_COLORS.no_label, "#8b95a1");
-  assert.equal(labelColorForClass("ambiguous"), "#7c3aed");
+  assert.equal(labelColorForClass("bathy"), "#d55e00");
 });
 
 test("grey display mode ignores classification colors", () => {

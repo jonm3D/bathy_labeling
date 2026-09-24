@@ -26,17 +26,12 @@ from bathy_labeler.backend.atl24_h5 import (
 )
 from bathy_labeler.backend.models import (
     BEAM_NAMES,
+    LABEL_TO_CLASS_PH,
     REQUIRED_DATASETS,
-    FinalLabel,
     PhotonTable,
+    labels_from_atl24_classes,
 )
 from bathy_labeler.backend.proposals import generate_seeded_proposal
-
-LABEL_TO_CLASS_PH: dict[FinalLabel, int] = {
-    "surface": 41,
-    "bathy": 40,
-    "no_label": 0,
-}
 
 BeamOutputStatus = Literal["complete", "unclassified", "invalid"]
 FileOutputStatus = Literal["complete", "partial", "unclassified", "invalid"]
@@ -169,7 +164,6 @@ class ReprocessSession:
                 context=photons,
                 beam_strength=beam_strength(beam, sc_orient),
                 seeds=seeds,
-                residual_label="no_label",
             )
         return {"rows": result.rows, "metadata": result.metadata}
 
@@ -430,28 +424,6 @@ class ReprocessSession:
 def source_label_for_relative_path(relative_path: str) -> str | None:
     parent = Path(relative_path).parent.as_posix()
     return None if parent == "." else parent.split("/", 1)[0]
-
-
-def labels_from_atl24_classes(
-    source_rows: list[int],
-    atl24_class_ph: list[int | None],
-) -> list[dict[str, int | str]]:
-    return [
-        {
-            "source_row": int(source_row),
-            "label": label_from_class_ph(class_ph),
-            "label_source": "auto",
-        }
-        for source_row, class_ph in zip(source_rows, atl24_class_ph)
-    ]
-
-
-def label_from_class_ph(class_ph: int | None) -> FinalLabel:
-    if class_ph == 41:
-        return "surface"
-    if class_ph == 40:
-        return "bathy"
-    return "no_label"
 
 
 def _valid_beams(path: Path) -> list[str]:

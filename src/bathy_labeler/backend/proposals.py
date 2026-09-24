@@ -25,7 +25,7 @@ def generate_seeded_proposal(
     context: PhotonTable,
     beam_strength: BeamStrength,
     seeds: list[dict[str, Any]],
-    residual_label: str = "noise",
+    residual_label: str = "no_label",
 ) -> ProposalResult:
     if residual_label not in FINAL_LABELS:
         raise ValueError(f"Invalid residual label: {residual_label}")
@@ -33,10 +33,10 @@ def generate_seeded_proposal(
     feature_table = build_feature_table(assigned, context, beam_strength)
     matrix = _scaled_matrix(feature_table.matrix(CENTROID_FEATURES))
     row_positions = {source_row: index for index, source_row in enumerate(assigned.source_row)}
-    seeded_non_noise = sorted(
+    seeded_labels = sorted(
         {label for label in seed_by_row.values() if label != residual_label}
     )
-    centroids = _centroids(matrix, row_positions, seed_by_row, seeded_non_noise)
+    centroids = _centroids(matrix, row_positions, seed_by_row, seeded_labels)
 
     rows: list[dict[str, int | str]] = []
     for position, source_row in enumerate(assigned.source_row):

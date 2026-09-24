@@ -5,7 +5,6 @@ import {
   acceptProposal,
   assignManualLabel,
   dirtyBeamLabelsForSource,
-  importAtl24Classifications,
   labelSelectionWithMode,
   LABEL_OPTIONS,
   toggleLabelMode,
@@ -31,7 +30,7 @@ test("manual assignment sets selected rows to manual source", () => {
 test("accepting proposal preserves manual edits", () => {
   const labels: LabelRow[] = [
     { source_row: 10, label: "bathy", label_source: "manual" },
-    { source_row: 11, label: "noise", label_source: "auto" },
+    { source_row: 11, label: "no_label", label_source: "auto" },
   ];
   const proposal: LabelRow[] = [
     { source_row: 10, label: "surface", label_source: "auto" },
@@ -67,24 +66,6 @@ test("proposal residual no label can be accepted as auto", () => {
   const proposal: LabelRow[] = [{ source_row: 4, label: "no_label", label_source: "auto" }];
 
   assert.deepEqual(acceptProposal(labels, proposal), proposal);
-});
-
-test("importing ATL24 classifications maps known classes and preserves manual edits", () => {
-  const labels: LabelRow[] = [
-    { source_row: 10, label: "no_label", label_source: "auto" },
-    { source_row: 11, label: "land", label_source: "manual" },
-    { source_row: 12, label: "no_label", label_source: "auto" },
-    { source_row: 13, label: "bathy", label_source: "auto" },
-  ];
-
-  const imported = importAtl24Classifications(labels, [41, 40, 0, 99]);
-
-  assert.deepEqual(imported, [
-    { source_row: 10, label: "surface", label_source: "auto" },
-    { source_row: 11, label: "land", label_source: "manual" },
-    { source_row: 12, label: "no_label", label_source: "auto" },
-    { source_row: 13, label: "no_label", label_source: "auto" },
-  ]);
 });
 
 test("label modes behave like a unique toggle option", () => {

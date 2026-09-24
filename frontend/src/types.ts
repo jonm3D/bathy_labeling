@@ -1,4 +1,4 @@
-export type FinalLabel = "surface" | "bathy" | "no_label" | "land" | "noise" | "ambiguous";
+export type FinalLabel = "surface" | "bathy" | "no_label";
 export type LabelSource = "manual" | "auto";
 export type SegmentStatus = "unlabeled" | "draft" | "complete" | "stale" | "conflict";
 export type ReprocessBeamStatus = "complete" | "unclassified" | "invalid";

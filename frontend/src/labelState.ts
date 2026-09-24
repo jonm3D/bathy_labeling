@@ -56,29 +56,3 @@ export function dirtyBeamLabelsForSource(
   }
   return labelsByBeam;
 }
-
-export function importAtl24Classifications(
-  currentLabels: LabelRow[],
-  atl24ClassPh: Array<number | null | undefined>,
-): LabelRow[] {
-  return currentLabels.map((row, index) => {
-    if (row.label_source === "manual") {
-      return { ...row };
-    }
-    return {
-      source_row: row.source_row,
-      label: mapAtl24ClassToLabel(atl24ClassPh[index]),
-      label_source: "auto",
-    };
-  });
-}
-
-function mapAtl24ClassToLabel(classPh: number | null | undefined): FinalLabel {
-  if (classPh === 41) {
-    return "surface";
-  }
-  if (classPh === 40) {
-    return "bathy";
-  }
-  return "no_label";
-}

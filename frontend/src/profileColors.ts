@@ -6,9 +6,6 @@ export const CLASS_COLORS: Record<FinalLabel, string> = {
   surface: "#0072b2",
   bathy: "#d55e00",
   no_label: "#8b95a1",
-  land: "#8f6b3f",
-  noise: "#6b7280",
-  ambiguous: "#7c3aed",
 };
 
 export function labelColorForClass(label: FinalLabel): string {

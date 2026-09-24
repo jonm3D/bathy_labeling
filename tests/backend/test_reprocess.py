@@ -6,7 +6,8 @@ import geopandas as gpd
 import h5py
 import pytest
 
-from bathy_labeler.backend.reprocess import LABEL_TO_CLASS_PH, ReprocessSession
+from bathy_labeler.backend.models import LABEL_TO_CLASS_PH
+from bathy_labeler.backend.reprocess import ReprocessSession
 from tests.backend.atl24_fixtures import write_atl24_like_file
 
 SOURCE_NAME = "ATL24_20240102000000_01230701_001_01.h5"

@@ -279,3 +279,16 @@ def test_review_rejects_invalid_site_marker(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="latitude must be between -90 and 90"):
         SlideRuleReviewSession(config_path)
+
+
+def test_review_rejects_labels_without_an_output_class(tmp_path: Path) -> None:
+    session = SlideRuleReviewSession(write_review_inputs(tmp_path))
+    track = session.sources_payload()["sources"][0]["beams"][0]
+    payload = session.read_track("test_site", track)
+    labels = [
+        {"source_row": row, "label": "noise", "label_source": "manual"}
+        for row in payload["assigned"]["source_row"]
+    ]
+
+    with pytest.raises(ValueError, match="Invalid label: noise"):
+        session.save_track("test_site", track, labels)

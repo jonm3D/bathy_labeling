@@ -8,7 +8,7 @@ test("manual seed rows are separated for open-circle plot overlays", () => {
   const labels: LabelRow[] = [
     { source_row: 1, label: "surface", label_source: "auto" },
     { source_row: 2, label: "bathy", label_source: "manual" },
-    { source_row: 3, label: "noise", label_source: "manual" },
+    { source_row: 3, label: "no_label", label_source: "manual" },
   ];
 
   assert.deepEqual(manualSeedRowsForPlot(labels, [{ sourceRow: 1 }, { sourceRow: 2 }, { sourceRow: 3 }]), [
