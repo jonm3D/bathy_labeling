@@ -1,5 +1,4 @@
 import type {
-  LabelPayload,
   LabelRow,
   DemSamplePayload,
   ManifestPayload,
@@ -10,8 +9,6 @@ import type {
   ReviewSourceListPayload,
   ReviewSavePayload,
   ReviewTrackPayload,
-  SegmentListPayload,
-  SegmentPayload,
 } from "./types.js";
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -29,18 +26,6 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export function buildSegmentUrl(segmentId: string): string {
-  return `/segments/${encodeURIComponent(segmentId)}`;
-}
-
-export function buildLabelsUrl(segmentId: string): string {
-  return `${buildSegmentUrl(segmentId)}/labels`;
-}
-
-export function buildProposalUrl(segmentId: string): string {
-  return `${buildSegmentUrl(segmentId)}/proposal`;
-}
-
 export function buildReprocessBeamUrl(source: string, beam: string): string {
   const params = new URLSearchParams({ source, beam });
   return `/reprocess/beam?${params.toString()}`;
@@ -53,34 +38,6 @@ export function buildReviewTrackUrl(source: string, track: string): string {
 
 export function fetchManifest(): Promise<ManifestPayload> {
   return fetchJson<ManifestPayload>("/manifest");
-}
-
-export function fetchSegments(): Promise<SegmentListPayload> {
-  return fetchJson<SegmentListPayload>("/segments");
-}
-
-export function fetchSegment(segmentId: string): Promise<SegmentPayload> {
-  return fetchJson<SegmentPayload>(buildSegmentUrl(segmentId));
-}
-
-export function fetchLabels(segmentId: string): Promise<LabelPayload> {
-  return fetchJson<LabelPayload>(buildLabelsUrl(segmentId));
-}
-
-export function requestProposal(segmentId: string, seeds: LabelRow[]): Promise<ProposalPayload> {
-  return fetchJson<ProposalPayload>(buildProposalUrl(segmentId), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ seeds }),
-  });
-}
-
-export function saveLabels(segmentId: string, labels: LabelRow[]): Promise<LabelPayload> {
-  return fetchJson<LabelPayload>(buildLabelsUrl(segmentId), {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ labels }),
-  });
 }
 
 export function configureReprocessSession(inputDir: string, outputDir: string): Promise<ManifestPayload> {

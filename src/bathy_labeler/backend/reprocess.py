@@ -18,11 +18,11 @@ from bathy_labeler.backend.classified_output import (
     write_classified_geopackage,
 )
 from bathy_labeler.backend.dem import sample_dem_along_track
-from bathy_labeler.backend.hdf5_store import (
-    _beam_strength,
-    _read_photon_rows,
-    _read_sc_orient,
-    _validate_beam_lengths,
+from bathy_labeler.backend.atl24_h5 import (
+    beam_strength,
+    read_photon_rows,
+    read_sc_orient,
+    validate_beam_lengths,
 )
 from bathy_labeler.backend.models import (
     BEAM_NAMES,
@@ -163,11 +163,11 @@ class ReprocessSession:
         with h5py.File(source.path, "r") as h5:
             group = self._beam_group(h5, source_relative_path, beam)
             photons = _read_all_photons(group)
-            sc_orient = _read_sc_orient(h5)
+            sc_orient = read_sc_orient(h5)
             result = generate_seeded_proposal(
                 assigned=photons,
                 context=photons,
-                beam_strength=_beam_strength(beam, sc_orient),
+                beam_strength=beam_strength(beam, sc_orient),
                 seeds=seeds,
                 residual_label="no_label",
             )
@@ -282,7 +282,7 @@ class ReprocessSession:
                 f"Missing datasets for {source_relative_path}/{beam}: "
                 f"{', '.join(missing)}"
             )
-        _validate_beam_lengths(group)
+        validate_beam_lengths(group)
         return group
 
     def _output_path(self, source_relative_path: str, beam: str) -> Path:
@@ -457,7 +457,7 @@ def label_from_class_ph(class_ph: int | None) -> FinalLabel:
 def _valid_beams(path: Path) -> list[str]:
     try:
         with h5py.File(path, "r") as h5:
-            if _read_sc_orient(h5) == 2:
+            if read_sc_orient(h5) == 2:
                 return []
             beams = []
             for beam in BEAM_NAMES:
@@ -467,7 +467,7 @@ def _valid_beams(path: Path) -> list[str]:
                 if not all(name in group for name in REQUIRED_DATASETS):
                     continue
                 try:
-                    _validate_beam_lengths(group)
+                    validate_beam_lengths(group)
                 except ValueError:
                     continue
                 beams.append(beam)
@@ -478,7 +478,7 @@ def _valid_beams(path: Path) -> list[str]:
 
 def _read_all_photons(group: h5py.Group) -> PhotonTable:
     count = int(group["x_atc"].shape[0])
-    return _read_photon_rows(group, np.arange(count, dtype=np.int64))
+    return read_photon_rows(group, np.arange(count, dtype=np.int64))
 
 
 def _classified_h5_frame(
@@ -542,7 +542,7 @@ def _h5_track_identity(
         raise ValueError(
             f"ATL24 H5 requires integer root rgt and cycle attributes: {source_path}"
         ) from exc
-    return match.group(1), rgt, cycle, _spot_number(beam, _read_sc_orient(h5))
+    return match.group(1), rgt, cycle, _spot_number(beam, read_sc_orient(h5))
 
 
 def _spot_number(beam: str, sc_orient: int) -> int:
@@ -605,7 +605,7 @@ def _beam_payload(
         "beam": beam,
         "photon_count": photon_count,
         "day_night": day_night,
-        "beam_strength": _beam_strength(beam, _read_sc_orient(h5)),
+        "beam_strength": beam_strength(beam, read_sc_orient(h5)),
         "x_atc_start_m": x_start,
         "x_atc_end_m": x_end,
     }

@@ -67,17 +67,6 @@ export interface GeoJsonMultiPolygon {
   coordinates: number[][][][];
 }
 
-export interface SegmentListPayload {
-  count: number;
-  segments: SegmentSummary[];
-}
-
-export interface LabelPayload {
-  status: SegmentStatus;
-  rows: LabelRow[];
-  metadata: Record<string, unknown>;
-}
-
 export interface ProposalPayload {
   rows: LabelRow[];
   metadata: Record<string, unknown>;
@@ -90,7 +79,6 @@ export interface ManifestPayload {
   output_dir?: string | null;
   suggested_output_dir?: string | null;
   source_count?: number;
-  segment_count?: number;
   review_config?: string;
   context_margin_m?: number;
   source_product?: "atl24" | string;

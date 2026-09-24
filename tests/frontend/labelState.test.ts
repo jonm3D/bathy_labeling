@@ -4,14 +4,17 @@ import test from "node:test";
 import {
   acceptProposal,
   assignManualLabel,
-  createDefaultLabels,
   dirtyBeamLabelsForSource,
   importAtl24Classifications,
   labelSelectionWithMode,
-  labelsForAppMode,
+  LABEL_OPTIONS,
   toggleLabelMode,
 } from "../../frontend/src/labelState.js";
-import type { LabelRow } from "../../frontend/src/types.js";
+import type { FinalLabel, LabelRow } from "../../frontend/src/types.js";
+
+function createDefaultLabels(sourceRows: number[], defaultLabel: FinalLabel = "no_label"): LabelRow[] {
+  return sourceRows.map((sourceRow) => ({ source_row: sourceRow, label: defaultLabel, label_source: "auto" }));
+}
 
 test("manual assignment sets selected rows to manual source", () => {
   const labels = createDefaultLabels([10, 11, 12]);
@@ -101,17 +104,10 @@ test("active label mode applies manual labels to selected rows", () => {
   assert.deepEqual(labelSelectionWithMode(labels, new Set([20, 22]), null), labels);
 });
 
-test("default mode exposes only surface bathy and no label classes", () => {
-  assert.deepEqual(labelsForAppMode("reprocess"), [
+test("label options are surface, bathy, and erase", () => {
+  assert.deepEqual(LABEL_OPTIONS, [
     { label: "surface", text: "Surface" },
     { label: "bathy", text: "Bathy" },
     { label: "no_label", text: "Erase" },
   ]);
-});
-
-test("training mode keeps the richer training label set", () => {
-  assert.deepEqual(
-    labelsForAppMode("training").map((item) => item.label),
-    ["surface", "bathy", "land", "noise", "ambiguous"],
-  );
 });

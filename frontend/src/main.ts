@@ -3,11 +3,11 @@ import "./styles.css";
 
 import {
   acceptProposal,
-  createDefaultLabels,
   dirtyBeamLabelsForSource,
+  LABEL_OPTIONS,
   labelSelectionWithMode,
-  labelsForAppMode,
   toggleLabelMode,
+  type LabelModeOption,
 } from "./labelState.js";
 import {
   computeMapSyncView,
@@ -33,19 +33,14 @@ import {
 } from "./reprocessStatus.js";
 import {
   configureReprocessSession,
-  fetchLabels,
   fetchManifest,
   requestReprocessDemSample,
   fetchReprocessBeam,
   fetchReprocessSources,
   fetchReviewSources,
   fetchReviewTrack,
-  fetchSegment,
-  fetchSegments,
-  requestProposal,
   requestReprocessProposal,
   resetReprocessBeam,
-  saveLabels,
   saveReprocessSource,
   saveReviewTrack,
 } from "./api.js";
@@ -79,10 +74,9 @@ import type {
   ReviewSource,
   ReviewTrackPayload,
   SegmentPayload,
-  SegmentSummary,
 } from "./types.js";
 
-type AppMode = "reprocess" | "training" | "review";
+type AppMode = "reprocess" | "review";
 
 const appHeading = requireElement("app-heading");
 const setupPanel = requireElement("setup-panel");
@@ -140,7 +134,6 @@ const mapView = createMap(mapContainer);
 const payloadSwitchGuard = createPayloadSwitchGuard();
 
 let appMode: AppMode = "reprocess";
-let segments: SegmentSummary[] = [];
 let reprocessSources: ReprocessSource[] = [];
 let reviewSources: ReviewSource[] = [];
 let currentPayload: SegmentPayload | null = null;
@@ -150,7 +143,6 @@ let activeLabel: FinalLabel | null = null;
 let settings: ProfileSettings = readSettings();
 let currentDemSample: DemSamplePayload | null = null;
 let currentDemKey: string | null = null;
-let currentSegmentId: string | null = null;
 let currentSource: string | null = null;
 let currentBeam: string | null = null;
 let selectedReprocessSource: string | null = null;
@@ -179,7 +171,7 @@ const RECENT_PATH_STORAGE_KEYS: Record<RecentPathKind, string> = {
   dem: "bathy-labeler.recentDemPaths",
 };
 
-configureLabelButtonsForMode("reprocess");
+configureLabelButtons();
 renderRecentPathOptions();
 updateDatasetControls();
 showEmptySelection("No beam selected");
@@ -261,8 +253,6 @@ runProposal.addEventListener("click", async () => {
   }
   if (appMode === "reprocess") {
     await runReprocessProposal();
-  } else if (appMode === "training") {
-    await runTrainingProposal();
   }
 });
 
@@ -366,10 +356,8 @@ async function boot(): Promise<void> {
   const manifest = await fetchManifest();
   if (manifest.mode === "review") {
     await initializeReviewMode(manifest);
-  } else if (manifest.mode === "reprocess") {
-    await initializeReprocessMode(manifest);
   } else {
-    await initializeTrainingMode();
+    await initializeReprocessMode(manifest);
   }
 }
 
@@ -395,7 +383,6 @@ async function initializeReviewMode(manifest: ManifestPayload): Promise<void> {
   showClassificationsLabel.textContent = "Class colors";
   classButtons.hidden = false;
   labelingHeading.textContent = "Labeling";
-  configureLabelButtonsForMode("reprocess");
   runProposal.hidden = true;
   resetAtl24.hidden = true;
   saveLabelsButton.textContent = "Save GeoPackage";
@@ -512,7 +499,6 @@ async function selectReviewTrack(source: string, track: string): Promise<void> {
     }
     currentSource = source;
     currentBeam = track;
-    currentSegmentId = null;
     currentPayload = segmentPayloadFromReviewTrack(payload);
     setActiveProfileRange(currentPayload);
     currentLabels = cloneLabels(
@@ -689,7 +675,6 @@ async function initializeReprocessMode(manifest: ManifestPayload): Promise<void>
   labelingHeading.textContent = "Labeling";
   fileHeading.textContent = "Files";
   beamHeading.textContent = "Beams";
-  configureLabelButtonsForMode("reprocess");
   runProposal.hidden = false;
   runProposal.textContent = "Suggest from seeds";
   resetAtl24.hidden = false;
@@ -843,7 +828,6 @@ async function selectReprocessBeam(source: string, beam: string): Promise<void> 
     }
     currentSource = source;
     currentBeam = beam;
-    currentSegmentId = null;
     currentPayload = segmentPayloadFromBeam(payload);
     setActiveProfileRange(currentPayload);
     currentLabels = cloneLabels(reprocessLabelCache.get(cacheKey(source, beam)) ?? payload.labels);
@@ -956,157 +940,6 @@ function cacheCurrentReprocessLabels(): void {
   if (currentSource && currentBeam) {
     reprocessLabelCache.set(cacheKey(currentSource, currentBeam), cloneLabels(currentLabels));
   }
-}
-
-async function initializeTrainingMode(): Promise<void> {
-  appMode = "training";
-  showClassificationsLabel.textContent = "Class colors";
-  document.title = "ATL24 Sidecar Labeler";
-  appHeading.textContent = "ATL24 Sidecar Labeler";
-  setupPanel.hidden = true;
-  demPathLabel.hidden = true;
-  showDemControl.hidden = true;
-  showClassificationsControl.hidden = false;
-  classButtons.hidden = false;
-  labelingHeading.textContent = "Labeling";
-  settings = { ...settings, showDem: false };
-  updateShowDemButton();
-  fileHeading.textContent = "To Label";
-  beamHeading.textContent = "Labeled";
-  configureLabelButtonsForMode("training");
-  runProposal.hidden = false;
-  runProposal.textContent = "Run Proposal";
-  resetAtl24.hidden = true;
-  saveLabelsButton.textContent = "Done";
-  await loadSegments();
-}
-
-async function loadSegments(selectSegmentId?: string): Promise<void> {
-  setStatus("Loading segments");
-  const payload = await fetchSegments();
-  segments = payload.segments;
-  segmentCount.textContent = `${payload.count.toLocaleString()} segments`;
-  renderSegmentLists();
-  const nextSegmentId = selectSegmentId ?? segments[0]?.segment_id;
-  if (nextSegmentId) {
-    await selectSegment(nextSegmentId);
-  } else {
-    clearProfile(profile);
-    setActiveProfileRange(null);
-    updateSelectionControls();
-    showEmptySelection("No segment selected");
-  }
-  setStatus("");
-}
-
-function renderSegmentLists(): void {
-  const open = segments.filter((segment) => segment.status !== "complete");
-  const complete = segments.filter((segment) => segment.status === "complete");
-  fileList.replaceChildren(...open.map(segmentButton));
-  beamList.replaceChildren(...complete.map(segmentButton));
-}
-
-function segmentButton(segment: SegmentSummary): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "segment-button";
-  button.dataset.segmentId = segment.segment_id;
-  button.innerHTML = `<span>${segment.file_name} ${segment.beam}</span><small>${formatKm(segment.x_atc_start_m)}-${formatKm(segment.x_atc_end_m)} km · ${segment.status}</small>`;
-  button.classList.toggle("is-selected", segment.segment_id === currentSegmentId);
-  button.addEventListener("click", () => {
-    void selectSegment(segment.segment_id);
-  });
-  return button;
-}
-
-async function selectSegment(segmentId: string): Promise<void> {
-  const switchToken = beginPayloadSwitch();
-  setStatus("Loading segment");
-  try {
-    const payload = await fetchSegment(segmentId);
-    const labels = await fetchLabels(segmentId);
-    if (!payloadSwitchGuard.isCurrent(switchToken)) {
-      return;
-    }
-    currentPayload = payload;
-    setActiveProfileRange(currentPayload);
-    currentLabels =
-      labels.status === "complete"
-        ? labels.rows
-        : createDefaultLabels(currentPayload.assigned.source_row, "noise");
-    currentSegmentId = segmentId;
-    currentSource = null;
-    currentBeam = null;
-    const selectionKey = currentSelectionKey();
-    if (selectionKey) {
-      labelBaselines.set(selectionKey, cloneLabels(currentLabels));
-    }
-    labelHistory = labelHistorySnapshot(currentLabels);
-    updateDirtyStateForCurrentSelection();
-    selectedRows = new Set();
-    activeSegment.textContent = `${currentPayload.segment.file_name} ${currentPayload.segment.beam} · ${formatKm(currentPayload.segment.x_atc_start_m)}-${formatKm(currentPayload.segment.x_atc_end_m)} km`;
-    updateActiveSelectionDetail();
-    mapView.setSegment(currentPayload, { fit: !isMapSyncEnabled() });
-    updateSegmentSelectionButtons();
-    await rerender();
-    if (!payloadSwitchGuard.isCurrent(switchToken)) {
-      return;
-    }
-    syncMapToProfile(true);
-    setStatus(`${currentPayload.assigned.source_row.length.toLocaleString()} assigned photons`);
-  } finally {
-    finishPayloadSwitch(switchToken);
-  }
-}
-
-async function runTrainingProposal(): Promise<void> {
-  if (!currentPayload) {
-    return;
-  }
-  const segmentId = currentPayload.segment.segment_id;
-  setStatus("Running proposal");
-  const labelsBeforeRequest = cloneLabels(currentLabels);
-  const seeds = currentLabels.filter((row) => row.label_source === "manual");
-  const proposal = await requestProposal(segmentId, seeds);
-  if (
-    currentSegmentId !== segmentId ||
-    !labelsEqual(currentLabels, labelsBeforeRequest)
-  ) {
-    return;
-  }
-  const nextLabels = acceptProposal(currentLabels, proposal.rows);
-  recordLabelHistory(nextLabels);
-  currentLabels = nextLabels;
-  selectedRows = new Set();
-  updateDirtyStateForCurrentSelection();
-  setStatus(`Proposal ready: ${countLabels(currentLabels)}`);
-  await rerender();
-}
-
-async function saveCurrentTrainingSegment(): Promise<void> {
-  if (!currentSegmentId) {
-    return;
-  }
-  const segmentId = currentSegmentId;
-  const labels = cloneLabels(currentLabels);
-  setStatus("Saving");
-  const saved = await saveLabels(segmentId, labels);
-  if (currentSegmentId !== segmentId) {
-    return;
-  }
-  const key = currentSelectionKey();
-  if (key) {
-    labelBaselines.set(key, cloneLabels(saved.rows));
-  }
-  if (!labelsEqual(currentLabels, labels)) {
-    updateDirtyStateForCurrentSelection();
-    setStatus("Saved earlier changes; newer changes remain unsaved");
-    return;
-  }
-  currentLabels = saved.rows;
-  markCurrentSelectionSaved();
-  setStatus("Saved");
-  await loadSegments(segmentId);
 }
 
 async function rerender(): Promise<void> {
@@ -1490,10 +1323,8 @@ async function saveCurrentLabels(): Promise<void> {
   try {
     if (appMode === "reprocess") {
       await saveCurrentReprocessSource();
-    } else if (appMode === "review") {
-      await saveCurrentReviewTrack();
     } else {
-      await saveCurrentTrainingSegment();
+      await saveCurrentReviewTrack();
     }
   } catch (error) {
     setStatus(`Save failed: ${errorMessage(error)}`);
@@ -1554,9 +1385,7 @@ function updateSelectionControls(): void {
     ? "Saving..."
     : appMode === "reprocess"
       ? "Save cleaned H5"
-      : appMode === "review"
-        ? "Save GeoPackage"
-        : "Done";
+      : "Save GeoPackage";
   saveLabelsButton.classList.toggle(
     "is-primary",
     hasPayload && saveable && !saveInProgress && !datasetLoading && !datasetBlocksSave,
@@ -1697,13 +1526,7 @@ function updateActiveSelectionDetail(): void {
 }
 
 function currentSelectionKey(): string | null {
-  if (appMode === "review") {
-    return currentSource && currentBeam ? cacheKey(currentSource, currentBeam) : null;
-  }
-  if (appMode === "reprocess") {
-    return currentSource && currentBeam ? cacheKey(currentSource, currentBeam) : null;
-  }
-  return currentSegmentId ? `training\u0000${currentSegmentId}` : null;
+  return currentSource && currentBeam ? cacheKey(currentSource, currentBeam) : null;
 }
 
 function selectionSaveState(): SaveState {
@@ -1720,9 +1543,6 @@ function isCurrentSelectionDirty(): boolean {
 
 function hasSaveableChanges(): boolean {
   if (appMode === "review") {
-    return isCurrentSelectionDirty();
-  }
-  if (appMode !== "reprocess") {
     return isCurrentSelectionDirty();
   }
   if (!currentSource) {
@@ -1831,17 +1651,13 @@ function updateClassModeButtons(): void {
   }
 }
 
-function configureLabelButtonsForMode(mode: "reprocess" | "training"): void {
-  const options = labelsForAppMode(mode);
-  if (activeLabel && !options.some((option) => option.label === activeLabel)) {
-    activeLabel = null;
-  }
-  classButtons.replaceChildren(...options.map(labelModeButton));
+function configureLabelButtons(): void {
+  classButtons.replaceChildren(...LABEL_OPTIONS.map(labelModeButton));
   classModeButtons = Array.from(classButtons.querySelectorAll<HTMLButtonElement>("button[data-label]"));
   updateClassModeButtons();
 }
 
-function labelModeButton(option: { label: FinalLabel; text: string }): HTMLButtonElement {
+function labelModeButton(option: LabelModeOption): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
   button.dataset.label = option.label;
@@ -1876,12 +1692,6 @@ function updateReprocessSelectionButtons(): void {
   }
   for (const button of beamList.querySelectorAll<HTMLButtonElement>(".segment-button[data-source][data-beam]")) {
     button.classList.toggle("is-selected", button.dataset.source === currentSource && button.dataset.beam === currentBeam);
-  }
-}
-
-function updateSegmentSelectionButtons(): void {
-  for (const button of document.querySelectorAll<HTMLButtonElement>(".segment-button[data-segment-id]")) {
-    button.classList.toggle("is-selected", button.dataset.segmentId === currentSegmentId);
   }
 }
 

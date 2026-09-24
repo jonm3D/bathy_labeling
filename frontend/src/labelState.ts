@@ -1,37 +1,15 @@
 import type { FinalLabel, LabelRow } from "./types.js";
 
-export type LabelModeSet = "reprocess" | "training";
-
 export interface LabelModeOption {
   label: FinalLabel;
   text: string;
 }
 
-const REPROCESS_LABELS: LabelModeOption[] = [
+export const LABEL_OPTIONS: readonly LabelModeOption[] = [
   { label: "surface", text: "Surface" },
   { label: "bathy", text: "Bathy" },
   { label: "no_label", text: "Erase" },
 ];
-
-const TRAINING_LABELS: LabelModeOption[] = [
-  { label: "surface", text: "Surface" },
-  { label: "bathy", text: "Bathy" },
-  { label: "land", text: "Land" },
-  { label: "noise", text: "Noise" },
-  { label: "ambiguous", text: "Ambiguous" },
-];
-
-export function labelsForAppMode(mode: LabelModeSet): LabelModeOption[] {
-  return mode === "reprocess" ? [...REPROCESS_LABELS] : [...TRAINING_LABELS];
-}
-
-export function createDefaultLabels(sourceRows: number[], defaultLabel: FinalLabel = "no_label"): LabelRow[] {
-  return sourceRows.map((sourceRow) => ({
-    source_row: sourceRow,
-    label: defaultLabel,
-    label_source: "auto",
-  }));
-}
 
 export function assignManualLabel(labels: LabelRow[], selectedRows: Set<number>, label: FinalLabel): LabelRow[] {
   return labels.map((row) =>

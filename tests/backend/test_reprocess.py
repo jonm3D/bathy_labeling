@@ -7,7 +7,7 @@ import h5py
 import pytest
 
 from bathy_labeler.backend.reprocess import LABEL_TO_CLASS_PH, ReprocessSession
-from tests.backend.test_hdf5_store import write_atl24_like_file
+from tests.backend.atl24_fixtures import write_atl24_like_file
 
 SOURCE_NAME = "ATL24_20240102000000_01230701_001_01.h5"
 SOURCE_RELATIVE = f"Guam/{SOURCE_NAME}"
@@ -179,6 +179,26 @@ def test_malformed_beam_does_not_hide_other_valid_beams(
 
     assert session.sources_payload()["sources"][0]["beams"] == ["gt1l"]
 
+
+def test_transition_orientation_files_are_skipped(tmp_path: Path) -> None:
+    input_dir = tmp_path / "ATL24_inputs"
+    write_atl24_like_file(input_dir / SOURCE_NAME, sc_orient=2)
+
+    session = ReprocessSession(input_dir=input_dir)
+
+    assert session.sources_payload()["sources"] == []
+
+
+def test_scalar_spacecraft_orientation_dataset_is_supported(
+    tmp_path: Path,
+) -> None:
+    input_dir = tmp_path / "ATL24_inputs"
+    write_atl24_like_file(input_dir / SOURCE_NAME, scalar_orient=True)
+    session = ReprocessSession(input_dir=input_dir)
+
+    beam = session.read_beam(SOURCE_NAME, "gt1l")["beam"]
+
+    assert beam["beam_strength"] == "weak"
 
 def test_label_to_class_mapping_matches_atl24_codes() -> None:
     assert LABEL_TO_CLASS_PH == {

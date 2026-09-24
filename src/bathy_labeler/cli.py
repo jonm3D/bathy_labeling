@@ -2,114 +2,51 @@ from __future__ import annotations
 
 from pathlib import Path
 
-try:
-    import typer
-except (
-    ModuleNotFoundError
-):  # pragma: no cover - exercised only without runtime deps installed
-    typer = None
+import typer
+
+app = typer.Typer(help="Run the ATL24 bathymetry cleaner.")
 
 
-if typer is not None:
-    app = typer.Typer(help="Run the ATL24 bathymetry cleaner.")
+@app.command(help="Run the local ATL24 bathymetry cleaner web app.")
+def serve(
+    input_dir: Path | None = typer.Option(None, "--input", help="ATL24 input folder."),
+    output_dir: Path | None = typer.Option(
+        None, "--output", help="Output folder for classified GeoPackages."
+    ),
+    review_config: Path | None = typer.Option(
+        None,
+        "--review-config",
+        help="JSON config for SlideRule ATL03/ATL24 GeoParquet AOI annotation.",
+    ),
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8787, "--port"),
+    static_dir: Path | None = typer.Option(
+        None, "--static-dir", help="Built frontend directory."
+    ),
+) -> None:
+    import uvicorn
 
-    @app.command(help="Run the local ATL24 bathymetry cleaner web app.")
-    def serve(
-        input_dir: Path | None = typer.Option(
-            None, "--input", help="ATL24 input folder."
-        ),
-        output_dir: Path | None = typer.Option(
-            None, "--output", help="Cleaned ATL24 output folder."
-        ),
-        review_config: Path | None = typer.Option(
-            None,
-            "--review-config",
-            help="JSON config for SlideRule ATL03/ATL24 GeoParquet AOI annotation.",
-        ),
-        training_source: Path | None = typer.Option(
-            None, "--training-source", hidden=True
-        ),
-        training: bool = typer.Option(
-            False,
-            "--training",
-            help="Use the experimental 10 km sidecar training-label workflow.",
-            hidden=True,
-        ),
-        project: Path | None = typer.Option(
-            None,
-            "--project",
-            help="Project folder for experimental training sidecars.",
-            hidden=True,
-        ),
-        host: str = typer.Option("127.0.0.1", "--host"),
-        port: int = typer.Option(8787, "--port"),
-        static_dir: Path | None = typer.Option(
-            None, "--static-dir", help="Built frontend directory."
-        ),
-    ) -> None:
-        import uvicorn
+    from bathy_labeler.backend.app import create_reprocess_app, create_review_app
+    from bathy_labeler.backend.reprocess import ReprocessSession
+    from bathy_labeler.backend.review import SlideRuleReviewSession
 
-        from bathy_labeler.backend.app import (
-            create_app,
-            create_reprocess_app,
-            create_review_app,
+    static_dir = static_dir or default_static_dir()
+    if review_config is not None:
+        if input_dir is not None or output_dir is not None:
+            raise typer.BadParameter(
+                "--review-config cannot be combined with --input or --output."
+            )
+        app_instance = create_review_app(
+            SlideRuleReviewSession(review_config), static_dir=static_dir
         )
-        from bathy_labeler.backend.hdf5_store import Atl24Store
-        from bathy_labeler.backend.labels import LabelSidecarStore
-        from bathy_labeler.backend.reprocess import ReprocessSession
-        from bathy_labeler.backend.review import SlideRuleReviewSession
-
-        if review_config is not None:
-            if input_dir is not None or output_dir is not None or training:
-                raise typer.BadParameter(
-                    "--review-config cannot be combined with input, output, or training options."
-                )
-            session = SlideRuleReviewSession(review_config)
-            app_instance = create_review_app(
-                session=session,
-                static_dir=static_dir or default_static_dir(),
-            )
-        elif training:
-            if training_source is None:
-                raise typer.BadParameter(
-                    "Training mode requires --training-source."
-                )
-            if project is None:
-                raise typer.BadParameter("Training mode requires --project.")
-            store = Atl24Store.from_folder(
-                source_root=training_source, project_root=project
-            )
-            label_store = LabelSidecarStore(project_root=project)
-            app_instance = create_app(
-                store=store,
-                label_store=label_store,
-                static_dir=static_dir or default_static_dir(),
-            )
-        else:
-            session = (
-                ReprocessSession(input_dir=input_dir, output_dir=output_dir)
-                if input_dir
-                else ReprocessSession()
-            )
-            app_instance = create_reprocess_app(
-                session=session, static_dir=static_dir or default_static_dir()
-            )
-        uvicorn.run(
-            app_instance,
-            host=host,
-            port=port,
+    else:
+        session = (
+            ReprocessSession(input_dir=input_dir, output_dir=output_dir)
+            if input_dir
+            else ReprocessSession()
         )
-
-else:
-    app = None
-
-
-def main() -> None:
-    if app is None:
-        raise RuntimeError(
-            "The CLI requires typer. Install bathy-labeler with runtime dependencies."
-        )
-    app()
+        app_instance = create_reprocess_app(session, static_dir=static_dir)
+    uvicorn.run(app_instance, host=host, port=port)
 
 
 def default_static_dir() -> Path | None:
@@ -118,4 +55,4 @@ def default_static_dir() -> Path | None:
 
 
 if __name__ == "__main__":
-    main()
+    app()

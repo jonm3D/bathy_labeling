@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from bathy_labeler.backend.app import create_reprocess_app
 from bathy_labeler.backend.reprocess import ReprocessSession
 
-from tests.backend.test_hdf5_store import write_atl24_like_file
+from tests.backend.atl24_fixtures import write_atl24_like_file
 
 rasterio = pytest.importorskip("rasterio")
 from rasterio.transform import from_origin

@@ -175,14 +175,6 @@ npm run test:frontend
 npm run build
 ```
 
-## Project Scope
-
-The publishable product is the ATL24 cleanup/reclassification workflow.
-
-The older sidecar training-label workflow is experimental and intentionally
-hidden from the normal CLI help. It should move to a separate branch or project
-before any serious ICESat-2 ML labeled-dataset effort.
-
 ## References
 
 - [ATL24 Version 2 product page](https://nsidc.org/data/atl24/versions/2)
