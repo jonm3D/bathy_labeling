@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from bathy_labeler import __version__
 from bathy_labeler.backend.reprocess import ReprocessSession
 from bathy_labeler.backend.review import SlideRuleReviewSession
 
@@ -15,7 +16,7 @@ def create_reprocess_app(
     session: ReprocessSession,
     static_dir: Path | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="ATL24 Bathymetry Cleaner", version="0.2.0")
+    app = FastAPI(title="ATL24 Bathymetry Cleaner", version=__version__)
 
     @app.get("/health")
     def health() -> dict[str, object]:
@@ -113,7 +114,7 @@ def create_review_app(
     session: SlideRuleReviewSession,
     static_dir: Path | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="ATL24 AOI Labeler", version="0.3.0")
+    app = FastAPI(title="ICESat-2 AOI Labeler", version=__version__)
 
     @app.get("/health")
     def health() -> dict[str, object]:

@@ -133,10 +133,10 @@ class ReprocessSession:
             photons = _read_all_photons(group)
             beam_payload = _beam_payload(source, beam, group, h5)
             labels, label_origin, manual_output_path = self._labels_for_beam(
-                source, beam, photons
+                source, beam, photons, h5
             )
             return {
-                "source": self._source_payload(source),
+                "source": source.to_dict(self._status_for_source(source, h5)),
                 "beam": beam_payload,
                 "photons": photons.to_dict(),
                 "labels": labels,
@@ -213,10 +213,7 @@ class ReprocessSession:
         backups: list[dict[str, str]] = []
         for beam, class_values in prepared:
             output, backup = self._write_prepared_beam_output(
-                source=source,
-                source_relative_path=source_relative_path,
-                beam=beam,
-                class_values=class_values,
+                self.output_dir, source, beam, class_values
             )
             outputs.append(output)
             if backup is not None:
@@ -230,10 +227,6 @@ class ReprocessSession:
             "written_beams": sorted(beam_labels),
             "source_status": self._source_payload(source),
         }
-
-    def source_status(self, source_relative_path: str) -> dict[str, object]:
-        source = self._source(source_relative_path)
-        return self._source_payload(source)
 
     def _scan_sources(self, root: Path) -> dict[str, ReprocessSource]:
         sources: dict[str, ReprocessSource] = {}
@@ -279,58 +272,40 @@ class ReprocessSession:
         validate_beam_lengths(group)
         return group
 
-    def _output_path(self, source_relative_path: str, beam: str) -> Path:
-        if self.output_dir is None:
-            raise ValueError("Output folder is required before saving")
-        source = self._source(source_relative_path)
-        with h5py.File(source.path, "r") as h5:
-            date, rgt, cycle, spot = _h5_track_identity(source.path, beam, h5)
-        relative = Path(source_relative_path)
-        filename = f"{date}_rgt{rgt:04d}_cycle{cycle:03d}_spot{spot}.gpkg"
-        return self.output_dir / relative.parent / filename
-
-    def _manual_output_path(
-        self, source_relative_path: str, beam: str
-    ) -> Path | None:
-        if self.output_dir is None:
-            return None
-        return self._output_path(source_relative_path, beam)
-
     def _source_payload(self, source: ReprocessSource) -> dict[str, object]:
-        return source.to_dict(self._status_for_source(source))
-
-    def _status_for_source(self, source: ReprocessSource) -> dict[str, object]:
-        beam_statuses: dict[str, BeamOutputStatus] = {}
         with h5py.File(source.path, "r") as h5:
-            for beam in source.beams:
-                output_path = self._manual_output_path(
-                    source.relative_path, beam
-                )
-                if output_path is None or not output_path.exists():
-                    beam_statuses[beam] = "unclassified"
-                    continue
-                group = self._beam_group(h5, source.relative_path, beam)
-                expected_count = int(group["x_atc"].shape[0])
-                date, rgt, cycle, spot = _h5_track_identity(
-                    source.path, beam, h5
-                )
-                expected_ids = _h5_photon_ids(
-                    date, rgt, cycle, spot, expected_count
-                )
-                is_valid = output_is_valid(output_path, expected_ids)
-                if not is_valid:
-                    beam_statuses[beam] = "invalid"
-                else:
-                    beam_statuses[beam] = "complete"
+            return source.to_dict(self._status_for_source(source, h5))
+
+    def _status_for_source(
+        self, source: ReprocessSource, h5: h5py.File
+    ) -> dict[str, object]:
+        beam_statuses: dict[str, BeamOutputStatus] = {}
+        for beam in source.beams:
+            if self.output_dir is None:
+                beam_statuses[beam] = "unclassified"
+                continue
+            output_path = _output_path(self.output_dir, source, beam, h5)
+            if not output_path.exists():
+                beam_statuses[beam] = "unclassified"
+                continue
+            group = self._beam_group(h5, source.relative_path, beam)
+            expected_ids = _h5_photon_ids(
+                *_h5_track_identity(source.path, beam, h5),
+                int(group["x_atc"].shape[0]),
+            )
+            beam_statuses[beam] = (
+                "complete" if output_is_valid(output_path, expected_ids) else "invalid"
+            )
         completed = sum(
             status == "complete" for status in beam_statuses.values()
         )
         invalid = sum(status == "invalid" for status in beam_statuses.values())
         total = len(source.beams)
+        status: FileOutputStatus
         if invalid > 0:
-            status: FileOutputStatus = "invalid"
+            status = "invalid"
         elif completed == 0:
-            status: FileOutputStatus = "unclassified"
+            status = "unclassified"
         elif completed == total:
             status = "complete"
         else:
@@ -348,8 +323,13 @@ class ReprocessSession:
         source: ReprocessSource,
         beam: str,
         photons: PhotonTable,
+        h5: h5py.File,
     ) -> tuple[list[dict[str, int | str]], LabelOrigin, Path | None]:
-        manual_path = self._manual_output_path(source.relative_path, beam)
+        manual_path = (
+            None
+            if self.output_dir is None
+            else _output_path(self.output_dir, source, beam, h5)
+        )
         if manual_path is None or not manual_path.exists():
             return (
                 labels_from_atl24_classes(
@@ -359,10 +339,8 @@ class ReprocessSession:
                 "atl24_original",
                 None,
             )
-        with h5py.File(source.path, "r") as h5:
-            date, rgt, cycle, spot = _h5_track_identity(source.path, beam, h5)
         expected_ids = _h5_photon_ids(
-            date, rgt, cycle, spot, len(photons.source_row)
+            *_h5_track_identity(source.path, beam, h5), len(photons.source_row)
         )
         try:
             class_ph = read_manual_classes(manual_path, expected_ids)
@@ -396,15 +374,14 @@ class ReprocessSession:
 
     def _write_prepared_beam_output(
         self,
+        output_dir: Path,
         source: ReprocessSource,
-        source_relative_path: str,
         beam: str,
         class_values: np.ndarray,
     ) -> tuple[dict[str, str], dict[str, str] | None]:
-        output_path = self._output_path(source_relative_path, beam)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
         with h5py.File(source.path, "r") as h5:
-            group = self._beam_group(h5, source_relative_path, beam)
+            output_path = _output_path(output_dir, source, beam, h5)
+            group = self._beam_group(h5, source.relative_path, beam)
             frame = _classified_h5_frame(
                 source.path,
                 beam,
@@ -419,6 +396,14 @@ class ReprocessSession:
         if backup_path is not None:
             backup = {"beam": beam, "backup_path": str(backup_path)}
         return output, backup
+
+
+def _output_path(
+    output_dir: Path, source: ReprocessSource, beam: str, h5: h5py.File
+) -> Path:
+    date, rgt, cycle, spot = _h5_track_identity(source.path, beam, h5)
+    filename = f"{date}_rgt{rgt:04d}_cycle{cycle:03d}_spot{spot}.gpkg"
+    return output_dir / Path(source.relative_path).parent / filename
 
 
 def source_label_for_relative_path(relative_path: str) -> str | None:
